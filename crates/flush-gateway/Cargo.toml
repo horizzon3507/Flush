@@ -1,0 +1,18 @@
+[package]
+name = "flush-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Gateway WebSocket v1 do Flush (Hello/Identify/Resume/Heartbeat/Dispatch)"
+
+[dependencies]
+flush-core = { path = "../flush-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-std.workspace = true
+futures.workspace = true
+url.workspace = true
+log.workspace = true
+async-tungstenite.workspace = true
