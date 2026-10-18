@@ -81,9 +81,24 @@ impl ClientConfig {
 }
 
 pub fn gateway_url_with_params(base: &str) -> String {
-    let mut url = base.trim().to_owned();
-    let has_v = url.contains("v=1");
-    let has_enc = url.contains("encoding=json");
+    // ⚠️ Barra obrigatória antes do query: o tungstenite ≥ 0.30 serializa
+    // `path_and_query` cru — sem path, o request sai como
+    // `GET ?v=1&encoding=json` e o gateway responde HTTP 400 Bad Request.
+    let base = base.trim();
+    let mut url = match base.split_once('?') {
+        Some((host, query)) => {
+            let host = host.trim_end_matches('/');
+            let query = query.trim_end_matches('/');
+            if query.is_empty() {
+                format!("{host}/")
+            } else {
+                format!("{host}/?{query}")
+            }
+        }
+        None => format!("{}/", base.trim_end_matches('/')),
+    };
+    let has_v = url.contains("v=1&") || url.ends_with("v=1");
+    let has_enc = url.contains("encoding=json&") || url.ends_with("encoding=json");
     if !url.contains('?') {
         url.push_str("?v=1&encoding=json");
     } else {
@@ -96,6 +111,32 @@ pub fn gateway_url_with_params(base: &str) -> String {
     }
     url
 }
+
+#[cfg(test)]
+mod tests_url {
+    use super::*;
+
+    #[test]
+    fn adiciona_barra_e_params() {
+        assert_eq!(
+            gateway_url_with_params("wss://gateway.fluxer.app"),
+            "wss://gateway.fluxer.app/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gateway.fluxer.app/"),
+            "wss://gateway.fluxer.app/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gw.example.com/?v=1&encoding=json"),
+            "wss://gw.example.com/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gw.example.com/?v=1"),
+            "wss://gw.example.com/?v=1&encoding=json"
+        );
+    }
+}
+
 
 #[allow(deprecated)]
 type WsStream = async_tungstenite::WebSocketStream<ConnectStream>;

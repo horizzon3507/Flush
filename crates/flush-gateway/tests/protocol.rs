@@ -4,7 +4,7 @@ use flush_gateway::{gateway_url_with_params, CloseCode, GatewayPayload, Opcode};
 fn gateway_url_completes_params() {
     assert_eq!(
         gateway_url_with_params("wss://gateway.fluxer.app"),
-        "wss://gateway.fluxer.app?v=1&encoding=json"
+        "wss://gateway.fluxer.app/?v=1&encoding=json"
     );
     assert_eq!(
         gateway_url_with_params("wss://gateway.fluxer.app/?v=1&encoding=json"),
