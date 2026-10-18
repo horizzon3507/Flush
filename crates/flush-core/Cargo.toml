@@ -1,0 +1,12 @@
+[package]
+name = "flush-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Tipos centrais do Flush: Snowflake, entidades e eventos (paridade com @fluxerjs/types)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
