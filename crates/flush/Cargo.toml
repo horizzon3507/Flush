@@ -7,10 +7,10 @@ rust-version.workspace = true
 description = "Flush: framework/lib em Rust para bots do Fluxer (gateway + REST + comandos)"
 
 [dependencies]
-flush-core = { path = "../flush-core", version = "0.1.1" }
-flush-gateway = { path = "../flush-gateway", version = "0.1.1" }
-flush-rest = { path = "../flush-rest", version = "0.1.1" }
-flush-framework = { path = "../flush-framework", version = "0.1.1" }
+flush-core = { path = "../flush-core", version = "0.1.3" }
+flush-gateway = { path = "../flush-gateway", version = "0.1.3" }
+flush-rest = { path = "../flush-rest", version = "0.1.3" }
+flush-framework = { path = "../flush-framework", version = "0.1.3" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

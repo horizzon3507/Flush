@@ -13,6 +13,13 @@ Each release heading is the version and date (`## v0.1.1 · 17/10/2026`); under 
 
 </details>
 
+## v0.1.3 · 18/10/2026
+
+Fix crítico de conexão no gateway `wss`. This version was made for the Flush lib on 18/10/2026 (v0.1.3).
+
+- **Gateway — fix do HTTP 400 no handshake**: `gateway_url_with_params` agora garante `/` no fim do host antes de anexar `?v=1&encoding=json`. Com o `tungstenite` ≥ 0.30 serializando `path_and_query` cru, a URL sem path (`wss://gateway.fluxer.app?v=1…`) saía como `GET ?v=1&encoding=json HTTP/1.1` e o gateway respondia `HTTP 400 Bad Request` — nenhum bot do framework conseguia conectar. A função também não duplica barra nem params se a URL já vier completa.
+- Teste de regressão novo no `flush-gateway` cobrindo 4 formatos de URL (sem barra, com barra, query completa, query parcial); expectativa do teste existente em `protocol.rs` atualizada.
+
 ## v0.1.1 · 17/10/2026
 
 Reactions, pins, invites, roles CRUD, per-command permission gates, hooks, embedded help and a mod log. This version was made for the Flush lib on 17/10/2026 (v0.1.1).

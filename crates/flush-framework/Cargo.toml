@@ -7,9 +7,9 @@ rust-version.workspace = true
 description = "Framework de comandos com prefixo do Flush (roteador, cooldown, reply, config por servidor)"
 
 [dependencies]
-flush-core = { path = "../flush-core", version = "0.1.1" }
-flush-gateway = { path = "../flush-gateway", version = "0.1.1" }
-flush-rest = { path = "../flush-rest", version = "0.1.1" }
+flush-core = { path = "../flush-core", version = "0.1.3" }
+flush-gateway = { path = "../flush-gateway", version = "0.1.3" }
+flush-rest = { path = "../flush-rest", version = "0.1.3" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
