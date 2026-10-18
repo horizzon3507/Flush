@@ -1,0 +1,17 @@
+[package]
+name = "pinguim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "PinguimBot: bot de Fluxer em Rust sobre o Flush (prefixo .)"
+
+[[bin]]
+name = "pinguim"
+path = "src/main.rs"
+
+[dependencies]
+flush-core = { path = "../flush-core" }
+flush-framework = { path = "../flush-framework" }
+flush-rest = { path = "../flush-rest" }
+async-std.workspace = true
