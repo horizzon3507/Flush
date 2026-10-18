@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "Cliente REST /v1 do Flush sobre surf + discovery /.well-known/fluxer"
 
 [dependencies]
-flush-core = { path = "../flush-core" }
+flush-core = { path = "../flush-core", version = "0.1.1" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

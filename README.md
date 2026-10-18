@@ -13,7 +13,7 @@ moderação com Case#, config por servidor).
 | `flush-gateway` | Gateway WS v1: Hello op 10 → Identify op 2 → Heartbeat op 1 (~41s) → Dispatch op 0; Resume op 6 (`session_id`/`seq`, retenção 60s); Reconect op 7, Invalid Session op 9; close codes 4000–4012 |
 | `flush-rest` | REST `/v1` sobre surf: discovery `GET /.well-known/fluxer` → `api_public` (fallback `https://api.fluxer.app`), auth `Bot <token>`, retry 429 via `Retry-After` |
 | `flush-framework` | Roteador + features: prefixo por guild, aliases, dedup, cooldown, presença rotativa 45s, gate de permissão por comando, help auto-gerado, hooks de eventos, mod-log, `GuildStore`/`CaseStore` JSON atômico, `with_mod_action` |
-| `flush` | Fachada: re-exporta os crates + exemplo `ping` |
+| `flush-lib` | Fachada: re-exporta os crates + exemplo `ping` |
 
 ## REST (/v1)
 
@@ -42,7 +42,7 @@ Rotas cobertas (espelho de `Routes` do `@fluxerjs/types`):
 ## Quickstart
 
 ```bash
-FLUXER_BOT_TOKEN=... cargo run -p flush --example ping
+FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping
 ```
 
 ```rust

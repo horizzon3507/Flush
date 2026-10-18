@@ -9,7 +9,7 @@
 cargo check --workspace --all-targets
 cargo test --workspace          # 26 testes, sem rede
 cargo clippy --workspace --all-targets   # deve ficar zerado
-FLUXER_BOT_TOKEN=... cargo run -p flush --example ping   # conecta de verdade
+FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping   # conecta de verdade
 ```
 
 NUNCA rode o exemplo sem permissão explícita (abre WS + REST de produção).

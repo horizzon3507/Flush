@@ -7,6 +7,8 @@ version = "0.1.1"
 edition = "2021"
 license = "MIT"
 rust-version = "1.85"
+repository = "https://github.com/horizzon3507/Flush"
+homepage = "https://github.com/horizzon3507/Flush"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

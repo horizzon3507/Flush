@@ -7,7 +7,7 @@ We follow [Semantic Versioning](https://semver.org/) and [Keep a Changelog](http
 
 Every version string starts with `v` (required), e.g. `v0.2.0`, `v0.1.0`.
 
-As libraries, all crates release under one shared version — **Flush** (`flush-core` / `flush-gateway` / `flush-rest` / `flush-framework` / `flush`). No per-surface sections and no `m` in the tag: just the version notes.
+As libraries, all crates release under one shared version — **Flush** (`flush-core` / `flush-gateway` / `flush-rest` / `flush-framework` / `flush-lib`). No per-surface sections and no `m` in the tag: just the version notes.
 
 Each release heading is the version and date (`## v0.1.1 · 17/10/2026`); under it, a short summary ends with a plain sentence like: “This version was made for the Flush lib on 17/10/2026 (v0.1.1).”
 
@@ -32,7 +32,7 @@ Reactions, pins, invites, roles CRUD, per-command permission gates, hooks, embed
 
 First public cut of the Fluxer bot framework. This version was made for the Flush lib on 16/10/2026 (v0.1.0).
 
-- Five-crate workspace: `flush-core` (types + null-tolerant wire), `flush-gateway` (WS v1 Hello/Identify/Resume/Heartbeat with 60s resume retention and backoff), `flush-rest` (discovery via `GET /.well-known/fluxer` with fallback, `Bot` auth, 429 retry), `flush-framework` (prefix router) and `flush` (facade + `ping` example).
+- Five-crate workspace: `flush-core` (types + null-tolerant wire), `flush-gateway` (WS v1 Hello/Identify/Resume/Heartbeat with 60s resume retention and backoff), `flush-rest` (discovery via `GET /.well-known/fluxer` with fallback, `Bot` auth, 429 retry), `flush-framework` (prefix router) and `flush-lib` (facade + `ping` example).
 - Prefix router mirroring real bots: ignores bots/self, per-guild prefix, aliases, `message.id` dedup, cooldown replies, mention-reply with prefix, rotating presence every 45s.
 - Moderation suite: permission+hierarchy checks, `with_mod_action` via `ModAction`, `GuildStore`/`CaseStore` with atomic JSON writes.
 - REST core: messages (reply with `message_reference`, edit, bulk-delete 1–100), members (pagination by `after`), bans, timeouts, roles lookup.
