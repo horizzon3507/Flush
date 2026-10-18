@@ -1,0 +1,19 @@
+[package]
+name = "flush"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Flush: framework/lib em Rust para bots do Fluxer (gateway + REST + comandos)"
+
+[dependencies]
+flush-core = { path = "../flush-core" }
+flush-gateway = { path = "../flush-gateway" }
+flush-rest = { path = "../flush-rest" }
+flush-framework = { path = "../flush-framework" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-std.workspace = true
+futures.workspace = true
+log.workspace = true
