@@ -13,6 +13,13 @@ Each release heading is the version and date (`## v0.1.1 · 17/10/2026`); under 
 
 </details>
 
+## v0.1.2 · 19/10/2026
+
+DM command replies fixed (Sourbot report). This version was made for the Flush lib on 19/10/2026 (v0.1.2).
+
+- **fix**: `MessageReference` no longer serializes `guild_id: null` and `type: 0` — Fluxer answered `400 INVALID_FORM_BODY` on DM replies; both fields are now omitted when absent, mirroring the `@fluxerjs` SDK.
+- Various other small tweaks
+
 ## v0.1.1 · 17/10/2026
 
 Reactions, pins, invites, roles CRUD, per-command permission gates, hooks, embedded help and a mod log. This version was made for the Flush lib on 17/10/2026 (v0.1.1).
