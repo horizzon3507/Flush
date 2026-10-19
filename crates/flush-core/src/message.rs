@@ -44,9 +44,9 @@ impl<'de> Deserialize<'de> for MessageType {
 pub struct MessageReference {
     pub channel_id: Snowflake,
     pub message_id: Snowflake,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guild_id: Option<Snowflake>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<u8>,
 }
 
