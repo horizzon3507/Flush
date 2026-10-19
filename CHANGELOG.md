@@ -13,6 +13,12 @@ Each release heading is the version and date (`## v0.1.1 · 17/10/2026`); under 
 
 </details>
 
+## v0.1.4 · 19/10/2026
+
+Fix de `INVALID_FORM_BODY` em respostas de comando via DM (report do Sourbot). This version was made for the Flush lib on 19/10/2026 (v0.1.4).
+
+- **Core — fix de DM**: `MessageReference` não serializa mais `guild_id: null` nem `type: 0`. O Adam rejeita o form quando a referência carrega `guild_id` nulo e `type` Default (`400 INVALID_FORM_BODY`), o que quebrava todo `reply` de comando em DM; os campos agora são omitidos quando ausentes, espelhando o `toMessageReference` do SDK `@fluxerjs`. Em guild o payload não muda.
+
 ## v0.1.3 · 18/10/2026
 
 Fix crítico de conexão no gateway `wss`. This version was made for the Flush lib on 18/10/2026 (v0.1.3).
