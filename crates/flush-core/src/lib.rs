@@ -1,8 +1,8 @@
-//! flush-core: tipos centrais do Flush.
+//! flush-core: core types for Flush.
 //!
-//! Paridade inicial com `@fluxerjs/types`: Snowflake, permissões,
-//! usuários, guilds, canais, mensagens, embeds e eventos de Gateway.
-//! Todo ID de recurso viaja como string decimal no wire.
+//! Mirrors `@fluxerjs/types` 3.x: Snowflake, permissions, users, guilds,
+//! channels, threads, messages, embeds, webhooks, expressions and Gateway events.
+//! Every resource ID travels as a decimal string on the wire.
 
 pub mod application;
 pub mod audit_log;

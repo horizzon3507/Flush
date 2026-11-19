@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Erros centrais do Flush (parse local; HTTP/WS têm seus próprios tipos).
+/// Core Flush errors (local parsing; HTTP/WS have their own types).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CoreError {
     #[error("INVALID_SNOWFLAKE_FORMAT: {0}")]

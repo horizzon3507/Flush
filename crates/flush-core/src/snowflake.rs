@@ -4,10 +4,10 @@ use std::str::FromStr;
 
 use crate::error::CoreError;
 
-/// Epoch do Fluxer em ms (2015-01-01T00:00:00Z).
+/// Fluxer epoch in ms (2015-01-01T00:00:00Z).
 pub const FLUXER_EPOCH: u64 = 1_420_070_400_000;
 
-/// Snowflake do Fluxer: u64 serializado como string decimal no wire.
+/// Fluxer Snowflake: a u64 serialized as a decimal string on the wire.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Snowflake(pub u64);
 
@@ -20,7 +20,7 @@ impl Snowflake {
         self.0
     }
 
-    /// Timestamp de criação em ms Unix: `(id >> 22) + FLUXER_EPOCH`.
+    /// Creation timestamp in Unix ms: `(id >> 22) + FLUXER_EPOCH`.
     pub fn timestamp_ms(self) -> u64 {
         (self.0 >> 22) + FLUXER_EPOCH
     }
@@ -33,7 +33,7 @@ impl Snowflake {
         (self.0 & 0xFFF) as u16
     }
 
-    /// Menor snowflake possível para um timestamp (fronteira de paginação).
+    /// Smallest possible snowflake for a timestamp (pagination boundary).
     pub fn from_timestamp_ms(ts: u64) -> Self {
         Self(ts.saturating_sub(FLUXER_EPOCH) << 22)
     }
@@ -57,7 +57,7 @@ impl FromStr for Snowflake {
         if t.is_empty() {
             return Err(CoreError::InvalidSnowflake(s.to_owned()));
         }
-        // Wire aceita string decimal; HTTP também aceita inteiro JSON (ver Deserialize).
+        // The wire uses decimal strings; HTTP may also send a JSON integer (see Deserialize).
         if t.len() > 1 && t.starts_with('0') {
             return Err(CoreError::InvalidSnowflake(s.to_owned()));
         }

@@ -1,5 +1,5 @@
-/// Bitfield de permissões do Fluxer (`1 << n`, u64).
-/// Espelho da tabela oficial `Roles and permissions`.
+/// Fluxer permission bitfield (`1 << n`, u64).
+/// Mirrors the official `Roles and permissions` table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Permissions(pub u64);
 

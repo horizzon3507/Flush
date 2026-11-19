@@ -1,5 +1,5 @@
-//! Convites (`GET /invites/{code}`, `POST /channels/{id}/invites`).
-//! Wire tolerante: campos de evento/REST com `default`.
+//! Invites (`GET /invites/{code}`, `POST /channels/{id}/invites`).
+//! Tolerant wire: event/REST fields use `default`.
 
 use serde::Deserialize;
 

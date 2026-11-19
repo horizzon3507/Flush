@@ -47,7 +47,7 @@ pub struct MemberUser {
     pub deaf: bool,
 }
 
-/// Alias: membro de guild.
+/// Alias: guild member.
 pub type GuildMember = MemberUser;
 
 impl MemberUser {
@@ -58,7 +58,7 @@ impl MemberUser {
     }
 
     pub fn timed_out(&self) -> bool {
-        // Comparação lexicográfica funciona para RFC3339 UTC.
+        // Lexicographic comparison works for RFC 3339 UTC.
         self.communication_disabled_until
             .as_deref()
             .map(|s| !s.is_empty() && s > "1970-01-01T00:00:00Z")
@@ -66,7 +66,7 @@ impl MemberUser {
     }
 }
 
-/// Snapshot de guild: o Gateway aninha metadados em `properties` ou manda flat.
+/// Guild snapshot: the Gateway nests metadata under `properties` or sends it flat.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GuildSnapshot {
@@ -182,7 +182,7 @@ impl Guild {
             .unwrap_or(-1)
     }
 
-    /// Caller gerencia o role se rank estritamente acima. Dono sempre pode.
+    /// The caller manages the role when ranked strictly above it. The owner always can.
     pub fn manages_role(&self, caller: &MemberUser, is_owner: bool, target: &Role) -> bool {
         if is_owner {
             return true;
