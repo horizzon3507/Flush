@@ -56,11 +56,15 @@ fn read_restore_target(path: &Path, policy: RestorePolicy) -> Result<Store, CliE
 }
 
 /// `cases` when every guild entry holds a `cases` list, otherwise `guilds`.
-fn kind(store: &Store) -> &'static str {
-    let cases = !store.is_empty()
-        && store
+/// An empty store has no entries to tell, so its file name decides.
+fn kind(store: &Store, path: &Path) -> &'static str {
+    let cases = if store.is_empty() {
+        path.file_stem().is_some_and(|stem| stem == "cases")
+    } else {
+        store
             .values()
-            .all(|entry| entry.get("cases").is_some_and(Value::is_array));
+            .all(|entry| entry.get("cases").is_some_and(Value::is_array))
+    };
     if cases {
         "cases"
     } else {
@@ -76,8 +80,8 @@ fn case_count(store: &Store) -> usize {
         .sum()
 }
 
-fn stats(store: &Store, bytes: u64) -> Value {
-    let kind = kind(store);
+fn stats(store: &Store, path: &Path, bytes: u64) -> Value {
+    let kind = kind(store, path);
     let mut out = json!({ "kind": kind, "guilds": store.len(), "bytes": bytes });
     if kind == "cases" {
         out["cases"] = json!(case_count(store));
@@ -166,11 +170,11 @@ pub fn data_command(
         _ => read_store(input)?,
     };
     match operation {
-        DataOperation::Stats => Ok(stats(&store, std::fs::metadata(input)?.len())),
+        DataOperation::Stats => Ok(stats(&store, input, std::fs::metadata(input)?.len())),
         DataOperation::Backup => {
             let backup = json!({
                 "version": 1,
-                "kind": kind(&store),
+                "kind": kind(&store, input),
                 "created_at": unix_now(),
                 "data": store,
             });
@@ -199,13 +203,12 @@ pub fn data_command(
         DataOperation::Restore => {
             let file = file.ok_or_else(|| CliError::new("USAGE", "Restore needs --file."))?;
             let (backup_kind, data) = read_backup(file)?;
-            if !store.is_empty() && backup_kind != kind(&store) {
+            // Only entries can clash: an empty side fits either kind.
+            let store_kind = kind(&store, input);
+            if !store.is_empty() && !data.is_empty() && backup_kind != store_kind {
                 return Err(CliError::new(
                     "BACKUP_INVALID",
-                    format!(
-                        "The backup holds {backup_kind} but the store holds {}.",
-                        kind(&store)
-                    ),
+                    format!("The backup holds {backup_kind} but the store holds {store_kind}."),
                 ));
             }
             let before = store.len();
@@ -338,6 +341,38 @@ mod tests {
         let restored: Value =
             serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
         assert_eq!(restored, serde_json::from_str::<Value>(&cases()).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn empty_stores_keep_their_kind() {
+        let dir = temp("empty");
+        let store = dir.join("cases.json");
+        let backup = dir.join("backup.json");
+        std::fs::write(&store, "{}").unwrap();
+        let run = |operation, apply| {
+            data_command(
+                operation,
+                &store,
+                Some(&backup),
+                apply,
+                RestorePolicy::Replace,
+            )
+        };
+        let stats = data_command(
+            DataOperation::Stats,
+            &store,
+            None,
+            false,
+            RestorePolicy::Replace,
+        )
+        .unwrap();
+        assert_eq!(stats["kind"], "cases");
+        run(DataOperation::Backup, false).unwrap();
+        std::fs::write(&store, cases()).unwrap();
+        let restored = run(DataOperation::Restore, true).unwrap();
+        assert_eq!(restored["kind"], "cases");
+        assert_eq!(restored["guilds_after"], 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
