@@ -35,7 +35,7 @@ pub use moderation::{with_mod_action, ModAction, Moderation, PermissionAction};
 pub use parse::{find_command, parse_mention_or_id, parse_prefix_body, ParsedCommand};
 pub use project::{
     bot_from_project, find_config, load_env, parse_env, read_env_file, ConfigError, ProjectConfig,
-    CONFIG_FILE,
+    CONFIG_ENV, CONFIG_FILE,
 };
 pub use router::{Bot, BotConfig, HookEvent, Hooks, NoHooks};
 pub use scheduler::{JobHandle, Scheduler};

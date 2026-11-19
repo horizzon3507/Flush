@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use flush_framework::{find_config, read_env_file, ProjectConfig};
+use flush_framework::{find_config, read_env_file, ProjectConfig, CONFIG_ENV};
 
 use crate::error::CliError;
 
@@ -106,10 +106,19 @@ pub fn build(dir: &Path, release: bool) -> Result<PathBuf, CliError> {
         .ok_or_else(|| CliError::new("BUILD_FAILED", "The project builds no binary."))
 }
 
-fn spawn(executable: &Path, project: &Project) -> Result<Child, CliError> {
-    Command::new(executable)
+/// The bot process: project directory as working directory, `.env` values
+/// and the path of the validated config in its environment.
+pub fn bot_command(executable: &Path, project: &Project) -> Command {
+    let mut command = Command::new(executable);
+    command
         .current_dir(&project.dir)
         .envs(project.env.iter().map(|(key, value)| (key, value)))
+        .env(CONFIG_ENV, &project.config_path);
+    command
+}
+
+fn spawn(executable: &Path, project: &Project) -> Result<Child, CliError> {
+    bot_command(executable, project)
         .spawn()
         .map_err(|e| CliError::new("RUN_FAILED", format!("Cannot start the bot: {e}.")))
 }
@@ -321,6 +330,24 @@ mod tests {
             assert!(project.env.iter().any(|(key, _)| key == "FLUXER_BOT_TOKEN"));
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn bot_command_names_the_validated_config() {
+        let project = Project {
+            dir: PathBuf::from("/srv/bot"),
+            config_path: PathBuf::from("/srv/bot/config/bot.toml"),
+            config: ProjectConfig::parse("name = \"demo\"\n").unwrap(),
+            env: vec![("GREETING".into(), "hi".into())],
+        };
+        let command = bot_command(Path::new("/t/bot"), &project);
+        let envs: Vec<_> = command.get_envs().collect();
+        assert!(envs.contains(&(
+            CONFIG_ENV.as_ref(),
+            Some("/srv/bot/config/bot.toml".as_ref())
+        )));
+        assert!(envs.contains(&("GREETING".as_ref(), Some("hi".as_ref()))));
+        assert_eq!(command.get_current_dir(), Some(Path::new("/srv/bot")));
     }
 
     #[cfg(unix)]

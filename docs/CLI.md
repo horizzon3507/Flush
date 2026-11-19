@@ -64,7 +64,8 @@ default_cooldown_ms = 0    # per-command default, 0 = off
 ```
 
 Unknown keys are rejected. The same loader is public API:
-`flush::bot_from_project(None)` finds the config, loads `.env`, points
+`flush::bot_from_project(None)` finds the config (`FLUSH_CONFIG`, then
+`flush.toml` in the current directory), loads `.env`, points
 `FLUSH_DATA_DIR` at `data_dir` and builds the `Bot` with the token from
 `FLUXER_BOT_TOKEN`; `flush::ProjectConfig` exposes the pieces.
 
@@ -113,6 +114,8 @@ them fails:
 `run` and `dev` validate the config and the token first, then build the
 project with cargo and start the bot binary directly, with the project
 directory as its working directory and the `.env` values in its environment.
+`FLUSH_CONFIG` carries the path of the validated config, so a bot started
+with `flush run ./config/bot.toml` reads that same file.
 
 `dev` watches `src/**/*.rs`, `Cargo.toml`, the config file and `.env`. Changes
 that arrive close together are grouped, and reloads never overlap. A change

@@ -233,11 +233,19 @@ pub fn load_env(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Start-up path of a scaffolded bot: finds the config, loads `.env`, points
-/// `FLUSH_DATA_DIR` at the configured data directory (unless already set) and
-/// builds the [`Bot`] with the token from `FLUXER_BOT_TOKEN`.
+/// Environment variable naming the config file. `flush run`/`dev` set it so
+/// the bot reads the same file the CLI validated.
+pub const CONFIG_ENV: &str = "FLUSH_CONFIG";
+
+/// Start-up path of a scaffolded bot: finds the config (`input`, then
+/// [`CONFIG_ENV`], then `flush.toml` in the current directory), loads `.env`,
+/// points `FLUSH_DATA_DIR` at the configured data directory (unless already
+/// set) and builds the [`Bot`] with the token from `FLUXER_BOT_TOKEN`.
 pub fn bot_from_project(input: Option<&Path>) -> Result<(Bot, ProjectConfig), ConfigError> {
-    let path = find_config(input)?;
+    let from_env = std::env::var_os(CONFIG_ENV)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let path = find_config(input.or(from_env.as_deref()))?;
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let config = ProjectConfig::load(&path)?;
     load_env(&dir)
