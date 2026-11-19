@@ -473,6 +473,26 @@ fn account_events_decode() {
 }
 
 #[test]
+fn malformed_lists_keep_raw_payload_and_null_lists_are_empty() {
+    use serde_json::json;
+    let bad = dispatch("GUILD_COUNTS_UPDATE", json!({ "counts": "oops" }));
+    assert!(matches!(bad, Event::Unknown { .. }));
+    let partial = dispatch(
+        "GUILD_COUNTS_UPDATE",
+        json!({ "counts": [{ "guild_id": "3" }, { "member_count": 1 }] }),
+    );
+    assert!(matches!(partial, Event::Unknown { .. }));
+    assert_eq!(
+        dispatch("WEBAUTHN_CREDENTIALS_UPDATE", serde_json::Value::Null),
+        Event::WebAuthnCredentialsUpdate(vec![])
+    );
+    assert_eq!(
+        dispatch("SESSIONS_REPLACE", json!({ "sessions": null })),
+        Event::SessionsReplace { sessions: vec![] }
+    );
+}
+
+#[test]
 fn message_send_attachments_serialize() {
     use flush_core::AttachmentRef;
     let payload = MessageSend {

@@ -754,6 +754,17 @@ fn list<T: for<'de> Deserialize<'de>>(data: &serde_json::Value, key: &str) -> Ve
     field(data, key).unwrap_or_default()
 }
 
+/// Missing or `null` is an empty list; anything else must decode in full.
+fn strict_list<T: for<'de> Deserialize<'de>>(
+    data: &serde_json::Value,
+    key: &str,
+) -> Option<Vec<T>> {
+    match data.get(key) {
+        None | Some(serde_json::Value::Null) => Some(Vec::new()),
+        Some(v) => serde_json::from_value(v.clone()).ok(),
+    }
+}
+
 fn whole<T: for<'de> Deserialize<'de>>(data: &serde_json::Value) -> Option<T> {
     serde_json::from_value(data.clone()).ok()
 }
@@ -860,7 +871,7 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
             channel_id: field(d, "channel_id")?,
         },
         "CHANNEL_MEMBER_COUNTS_UPDATE" => Event::ChannelMemberCountsUpdate {
-            counts: list(d, "counts"),
+            counts: strict_list(d, "counts")?,
         },
         "CHANNEL_PINS_ACK" => Event::ChannelPinsAck {
             channel_id: field(d, "channel_id")?,
@@ -873,10 +884,10 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
         "FORUM_UNREADS" => Event::ForumUnreads {
             guild_id: field(d, "guild_id")?,
             channel_id: field(d, "channel_id")?,
-            threads: list(d, "threads"),
+            threads: strict_list(d, "threads")?,
         },
         "GUILD_COUNTS_UPDATE" => Event::GuildCountsUpdate {
-            counts: list(d, "counts"),
+            counts: strict_list(d, "counts")?,
         },
         "GUILD_MEMBER_LIST_UPDATE" => Event::GuildMemberListUpdate(whole(d)?),
         "GUILD_SYNC" => Event::GuildSync(whole(d)?),
@@ -888,12 +899,12 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
             channel_id: field(d, "channel_id")?,
             message_id: field(d, "message_id")?,
             guild_id: field(d, "guild_id"),
-            reactions: list(d, "reactions"),
+            reactions: strict_list(d, "reactions")?,
         },
         "PASSIVE_UPDATES" => Event::PassiveUpdates(whole(d)?),
         "PRESENCE_UPDATE_BULK" => Event::PresenceUpdateBulk {
             guild_id: field(d, "guild_id"),
-            presences: list(d, "presences"),
+            presences: strict_list(d, "presences")?,
         },
         "RECENT_MENTION_DELETE" => Event::RecentMentionDelete(whole(d)?),
         "RELATIONSHIP_ADD" => Event::RelationshipAdd(whole(d)?),
@@ -908,16 +919,16 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
         "SESSIONS_REPLACE" => Event::SessionsReplace {
             sessions: match d {
                 serde_json::Value::Array(_) => whole(d)?,
-                _ => list(d, "sessions"),
+                _ => strict_list(d, "sessions")?,
             },
         },
         "THREAD_MEMBER_LIST_UPDATE" => Event::ThreadMemberListUpdate {
             guild_id: field(d, "guild_id")?,
             thread_id: field(d, "thread_id")?,
-            members: list(d, "members"),
+            members: strict_list(d, "members")?,
         },
         "USER_CONNECTIONS_UPDATE" => Event::UserConnectionsUpdate {
-            connections: list(d, "connections"),
+            connections: strict_list(d, "connections")?,
         },
         "USER_GUILD_SETTINGS_UPDATE" => Event::UserGuildSettingsUpdate(whole(d)?),
         "USER_NOTE_UPDATE" => Event::UserNoteUpdate {
@@ -925,11 +936,13 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
             note: field(d, "note"),
         },
         "USER_PINNED_DMS_UPDATE" => Event::UserPinnedDmsUpdate {
-            pinned_channels: list(d, "pinned_channels"),
+            pinned_channels: strict_list(d, "pinned_channels")?,
         },
         "USER_SETTINGS_UPDATE" => Event::UserSettingsUpdate(whole(d)?),
         "VOICE_STATE_ACK" => Event::VoiceStateAck(whole(d)?),
-        "WEBAUTHN_CREDENTIALS_UPDATE" => Event::WebAuthnCredentialsUpdate(whole(d)?),
+        "WEBAUTHN_CREDENTIALS_UPDATE" => {
+            Event::WebAuthnCredentialsUpdate(if d.is_null() { Vec::new() } else { whole(d)? })
+        }
         _ => return None,
     })
 }
