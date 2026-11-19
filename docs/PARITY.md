@@ -14,7 +14,7 @@ dropped: each item is planned as its own follow-up release.
 | Gateway dispatch events | All 80 names in `DISPATCH_EVENTS`; 47 decode into typed `Event` variants, the other 33 arrive as `Event::Unknown` with the raw payload |
 | Entities | User, guild, member, role, channel (incl. threads, forum, media, announcement), message, embed, invite, webhook, emoji, sticker, audit log, voice state, application |
 | CDN helpers (`Cdn.ts`) | Avatar, default avatar, banner, member avatar/banner, guild icon/banner/splash, emoji, sticker, with the SDK size ladder |
-| Gateway lifecycle (`@fluxerjs/ws`) | Identify, resume, heartbeat, reconnect, close codes, presence update, member chunk requests; one connection, no sharding |
+| Gateway lifecycle (`@fluxerjs/ws`) | Identify, resume, heartbeat, reconnect, close codes, presence update, member chunk requests; `ShardManager` runs one connection per shard (`shard_id_for_guild`, `ShardPlan`, per-shard status, reconnect) |
 | Builders (`@fluxerjs/builders`) | `EmbedBuilder` with SDK limits; `MessageSend`, `WebhookExecute`, `StartThread` payloads |
 
 ### REST methods by resource
@@ -70,7 +70,9 @@ Deferred; mostly user-account events a bot token does not receive:
 | Typed arguments | `Args` (user, role, channel, integer, boolean, duration, rest) |
 | Middleware | `Middleware`, `Guard`, `guild_only` |
 | Collectors | `Collectors` (messages and reactions) |
-| Scheduler | `Scheduler` (`after`, `every`, cancellation) |
+| Scheduler | `Scheduler` (`after`, `every`, cancellation, paused on shard processes that should not run jobs) |
+| Sharding | `BotConfig::sharding` (`ShardingOptions`: ids, count or auto, leader shard, `ShardSchedulerMode`), `FLUXER_SHARD_IDS` / `FLUXER_SHARD_COUNT` / `FLUXER_SHARD_PROCESS_ID`, `BotShard` (`shard_id_for_guild`, `is_leader`, `should_start_jobs`, statuses), `HookEvent::ShardStatus` |
+| Cluster | `Cluster` (`add`, `add_runner`, `restart`, `remove`, `destroy`, entries with status / last error / metadata, lifecycle events) |
 
 ### Deferred
 
@@ -80,7 +82,11 @@ Each of these is a follow-up of its own:
 2. **CLI** (project scaffolding, config loading, run/reload lifecycle).
 3. **SQLite store** (Flush persists `GuildStore`/`CaseStore` as JSON only),
    plus Yuzuha's variable service on top of it.
-4. **Sharding and cluster runtime** (Flush opens a single gateway connection).
+4. **Cross-process shard supervisor**: spawning one child process per shard
+   group, and `broadcastEval` / `fetchClientValues` / `respawn` across
+   processes. A process started with the `FLUXER_SHARD_*` variables runs its
+   shards; `BotShard::broadcast_eval` covers the shards of one process only.
+   `ShardCount::Auto` sizes from the first page of the bot's guild list.
 5. **Voice runtime** (Flush decodes voice state/server events but opens no
    voice connection).
 6. **Music / Lavalink** integration.

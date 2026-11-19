@@ -40,6 +40,9 @@ pub struct BotConfig {
     pub presence_lines: Vec<String>,
     /// Default per-command cooldown when the command sets none (ms, 0 = off).
     pub default_cooldown_ms: u64,
+    /// Sharding. `None` = one unsharded connection, unless the
+    /// `FLUXER_SHARD_*` variables assign shards to this process.
+    pub sharding: Option<crate::sharding::ShardingOptions>,
 }
 
 impl BotConfig {
@@ -56,6 +59,7 @@ impl BotConfig {
             data_path: None,
             presence_lines: Vec::new(),
             default_cooldown_ms: 0,
+            sharding: None,
         }
     }
 }
@@ -85,6 +89,11 @@ pub enum HookEvent<'a> {
     Message(&'a Message),
     /// Every gateway event, before the bot updates its cache.
     Raw(&'a Event),
+    /// A shard of a sharded bot changed connection status.
+    ShardStatus {
+        shard_id: u32,
+        status: flush_gateway::ShardStatus,
+    },
 }
 
 /// Event hooks from the `Bot` cache (ready, guilds, members, messages).
@@ -114,6 +123,7 @@ pub struct Bot {
     middleware: Vec<Arc<dyn crate::middleware::Middleware>>,
     collectors: crate::collector::Collectors,
     scheduler: crate::scheduler::Scheduler,
+    shard: Arc<std::sync::RwLock<crate::sharding::BotShard>>,
 }
 
 impl Bot {
@@ -144,6 +154,7 @@ impl Bot {
             middleware: Vec::new(),
             collectors: crate::collector::Collectors::new(),
             scheduler: crate::scheduler::Scheduler::new(),
+            shard: Arc::new(std::sync::RwLock::new(crate::sharding::BotShard::single())),
         })
     }
 
@@ -156,6 +167,49 @@ impl Bot {
     /// Registry fed with this bot's messages and reactions.
     pub fn collectors(&self) -> crate::collector::Collectors {
         self.collectors.clone()
+    }
+
+    /// Shards this process runs (shard 0 of 1 until `run()` resolves them).
+    pub fn shard(&self) -> crate::sharding::BotShard {
+        self.shard.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Live handle to the shard view, for hooks, commands and jobs.
+    pub fn shard_handle(&self) -> Arc<std::sync::RwLock<crate::sharding::BotShard>> {
+        self.shard.clone()
+    }
+
+    /// Resolves the shard plan from the config and the process environment.
+    /// `Ok(None)` = unsharded.
+    async fn resolve_shards(
+        &self,
+        rest: &RestClient,
+    ) -> Result<Option<(flush_gateway::ShardPlan, crate::sharding::ShardingOptions)>, CommandError>
+    {
+        use crate::sharding::ShardEnv;
+        let invalid = |e: flush_gateway::ShardError| CommandError::Internal(e.to_string());
+        let options = self.config.sharding.clone();
+        let env = match &options {
+            Some(o) if !o.use_env => None,
+            _ => ShardEnv::from_env().map_err(invalid)?,
+        };
+        if options.is_none() && env.is_none() {
+            return Ok(None);
+        }
+        let options = options.unwrap_or_default();
+        let guild_count = if options.needs_guild_count() {
+            let guilds = rest
+                .current_user_guilds(false)
+                .await
+                .map_err(CommandError::Rest)?;
+            Some(guilds.len() as u64)
+        } else {
+            None
+        };
+        let plan = options
+            .resolve(env.as_ref(), guild_count)
+            .map_err(invalid)?;
+        Ok(Some((plan, options)))
     }
 
     pub fn scheduler(&self) -> crate::scheduler::Scheduler {
@@ -226,9 +280,12 @@ impl Bot {
                 ..Default::default()
             });
         }
+        self.refresh_help();
+        if let Some((plan, options)) = self.resolve_shards(&rest).await? {
+            return self.run_sharded(gw_cfg, plan, options).await;
+        }
         let mut gw =
             GatewayClient::new(gw_cfg).map_err(|e| CommandError::Internal(e.to_string()))?;
-        self.refresh_help();
         loop {
             // 45s timeout = rotating presence tick (mirrors Sour).
             let next = gw.next_event();
@@ -241,6 +298,64 @@ impl Bot {
                 }
                 Err(_) => {
                     self.rotate_presence(&mut gw).await;
+                }
+            }
+        }
+    }
+
+    /// One gateway connection per shard, all feeding this bot.
+    async fn run_sharded(
+        &mut self,
+        gw_cfg: ClientConfig,
+        plan: flush_gateway::ShardPlan,
+        options: crate::sharding::ShardingOptions,
+    ) -> Result<(), CommandError> {
+        use flush_gateway::{ShardEvent, ShardManager, ShardManagerOptions};
+        let view = crate::sharding::BotShard::new(
+            plan.clone(),
+            options.leader_shard_id,
+            options.scheduler_mode,
+        );
+        info!(
+            "flush: sharding ids={:?} count={} leader={}",
+            view.ids(),
+            view.count(),
+            view.is_leader()
+        );
+        self.scheduler.set_paused(!view.should_start_jobs());
+        *self.shard.write().unwrap_or_else(|e| e.into_inner()) = view;
+        let manager_options = ShardManagerOptions {
+            identify_delay: options.identify_delay,
+            ..Default::default()
+        };
+        let mut shards = ShardManager::spawn(gw_cfg, plan, manager_options)
+            .map_err(|e| CommandError::Internal(e.to_string()))?;
+        loop {
+            let next = shards.next();
+            match async_std::future::timeout(std::time::Duration::from_secs(45), next).await {
+                Ok(Some(ShardEvent::Dispatch { event, .. })) => self.on_event(*event).await,
+                Ok(Some(ShardEvent::StatusChanged { shard_id, status })) => {
+                    self.shard
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .set_status(shard_id, status);
+                    if let Some(h) = &self.hooks {
+                        h.dispatch(HookEvent::ShardStatus { shard_id, status })
+                            .await;
+                    }
+                }
+                Ok(Some(ShardEvent::Fatal { shard_id, error })) => {
+                    error!("flush: shard {shard_id} gateway error: {error}");
+                    shards.shutdown().await;
+                    return Err(CommandError::Internal(format!("shard {shard_id}: {error}")));
+                }
+                Ok(None) => {
+                    return Err(CommandError::Internal("every shard stopped".into()));
+                }
+                Err(_) => {
+                    if let Some(presence) = self.next_presence() {
+                        shards.set_presence(&presence);
+                    }
                 }
             }
         }
@@ -564,16 +679,22 @@ impl Bot {
         }
     }
 
-    async fn rotate_presence(&mut self, gw: &mut GatewayClient) {
+    fn next_presence(&mut self) -> Option<Presence> {
         if self.config.presence_lines.is_empty() {
-            return;
+            return None;
         }
         self.presence_idx = (self.presence_idx + 1) % self.config.presence_lines.len();
         let line = self.config.presence_lines[self.presence_idx].clone();
-        let presence = Presence {
+        Some(Presence {
             status: flush_core::PresenceStatus::Online,
             activities: vec![flush_core::Activity::custom(line)],
             ..Default::default()
+        })
+    }
+
+    async fn rotate_presence(&mut self, gw: &mut GatewayClient) {
+        let Some(presence) = self.next_presence() else {
+            return;
         };
         if let Err(e) = gw.set_presence(&presence).await {
             warn!("flush: presence update failed: {e}");
