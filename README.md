@@ -121,7 +121,7 @@ Env: `FLUXER_BOT_TOKEN` (required), `PREFIX` (default `!`),
 ## Tests
 
 ```bash
-cargo test --workspace   # 80 tests: tolerant wire, routes, protocol, framework, CLI
+cargo test --workspace   # tolerant wire, routes, protocol, framework, CLI
 cargo test -p flush-cli --test cli -- --ignored   # builds, lints and tests every scaffold
 cargo clippy --workspace --all-targets  # zero warnings
 ```

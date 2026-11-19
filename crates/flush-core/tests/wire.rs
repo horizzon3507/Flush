@@ -306,3 +306,17 @@ fn channel_types_and_cdn_follow_sdk() {
     );
     assert_eq!(flush_core::banner_url(sf, "", None), None);
 }
+
+#[test]
+fn malformed_list_entry_falls_back_to_unknown() {
+    let bad = dispatch(
+        "GUILD_EMOJIS_UPDATE",
+        serde_json::json!({ "guild_id": "1", "emojis": [{ "id": "not-a-snowflake" }] }),
+    );
+    assert!(matches!(bad, Event::Unknown { .. }));
+    let empty = dispatch(
+        "GUILD_EMOJIS_UPDATE",
+        serde_json::json!({ "guild_id": "1", "emojis": null }),
+    );
+    assert!(matches!(empty, Event::GuildEmojisUpdate { ref emojis, .. } if emojis.is_empty()));
+}
