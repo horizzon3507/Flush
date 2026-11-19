@@ -223,7 +223,13 @@ pub fn data_command(
             if apply {
                 write_atomic(input, &restored)?;
             }
+            let note = if apply {
+                "Restart the bot: a running bot keeps the store it loaded in memory."
+            } else {
+                "Dry run: nothing was written. Pass --apply to restore."
+            };
             Ok(json!({
+                "note": note,
                 "dry_run": !apply,
                 "policy": if policy == RestorePolicy::Merge { "merge" } else { "replace" },
                 "kind": backup_kind,
