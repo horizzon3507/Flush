@@ -278,7 +278,7 @@ impl VariableStore for SlowLock {
     }
     fn transact(
         &self,
-        body: &mut dyn FnMut(&mut dyn flush_framework::VariableAccess) -> Result<(), VariableError>,
+        body: &mut flush_framework::variables::TransactionBody<'_>,
     ) -> Result<(), VariableError> {
         self.clock.fetch_add(1_000, Ordering::SeqCst);
         self.inner.transact(body)
