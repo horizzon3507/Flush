@@ -1,13 +1,13 @@
-//! Exemplo: bot mínimo com `!ping` sobre o Flush (framework).
+//! Example: a minimal `!ping` bot on the Flush framework.
 //!
-//! Demostração das features de framework:
-//! - `enable_help()`: `help` auto-gerado da lista de comandos registrados
-//! - gate de permissão por comando (`required_permission`)
-//! - hooks de eventos (`Hooks`) — log de entrada de membro
+//! Shows these framework features:
+//! - `enable_help()`: `help` generated from the registered commands
+//! - per-command permission gate (`required_permission`)
+//! - event hooks (`Hooks`): logs member joins
 //! - mod-log via `ModAction.log_channel`
 //!
 //! ```bash
-//! FLUXER_BOT_TOKEN=... cargo run -p flush --example ping
+//! FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping
 //! ```
 
 use std::future::Future;
@@ -26,7 +26,7 @@ impl Command for Ping {
         "ping"
     }
     fn description(&self) -> &str {
-        "Latência (round-trip) — espelho do Sour"
+        "Latency (round-trip), as in Sour"
     }
     fn cooldown_ms(&self) -> u64 {
         3_000
@@ -41,17 +41,17 @@ impl Command for Ping {
                 .reply(
                     ctx.channel_id(),
                     ctx.message,
-                    MessageSend::text("🏓 Pong! (editando com round-trip…)"),
+                    MessageSend::text("🏓 Pong! (editing with the round-trip…)"),
                     false,
                 )
                 .await?;
-            // Round-trip: diferença de snowflakes ≈ ms desde o epoch.
+            // Round-trip: snowflake difference ≈ ms since the epoch.
             let dt = sent.id.get().saturating_sub(ctx.message.id.get()) >> 22;
-            // Todo comando registrado aparece no `help` embutido.
+            // Every registered command shows up in the built-in `help`.
             let embed = EmbedBuilder::new()
                 .title("🏓 Pong!")
                 .description(format!(
-                    "**Latência**\n-# ╰› Round-trip: **{dt}ms**\n-# ╰› Use `{p}help` para ver meus comandos.",
+                    "**Latency**\n-# ╰› Round-trip: **{dt}ms**\n-# ╰› Use `{p}help` to see my commands.",
                     p = ctx.prefix
                 ))
                 .color(0xFCE300)
@@ -68,7 +68,7 @@ impl Command for Ping {
                     },
                 )
                 .await?;
-            // Lista as reações da mensagem (feature reactions do REST).
+            // Lists the message's reactions (REST reactions feature).
             for r in &sent.reactions {
                 let _ = ctx
                     .rest
@@ -80,7 +80,7 @@ impl Command for Ping {
     }
 }
 
-/// `!warn <alvo> [motivo]` — fluxo padrão de moderação com gate de permissão.
+/// `!warn <target> [reason]`: the standard moderation flow with a permission gate.
 struct Warn;
 
 impl Command for Warn {
@@ -88,7 +88,7 @@ impl Command for Warn {
         "warn"
     }
     fn description(&self) -> &str {
-        "Dá um warning a um membro: warn <alvo> [motivo]"
+        "Warns a member: warn <target> [reason]"
     }
     fn usage(&self) -> Option<&str> {
         Some("warn <alvo> [motivo]")
@@ -102,7 +102,7 @@ impl Command for Warn {
     ) -> Pin<Box<dyn Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let Some(guild) = ctx.guild_id() else {
-                ctx.reply_no_ping("❌ Este comando só funciona em servidores.")
+                ctx.reply_no_ping("❌ This command only works in servers.")
                     .await?;
                 return Ok(());
             };
@@ -118,7 +118,7 @@ impl Command for Warn {
                 .collect::<Vec<_>>()
                 .join(" ");
             let reason = if reason.is_empty() {
-                "sem motivo".to_owned()
+                "no reason".to_owned()
             } else {
                 reason
             };
@@ -134,7 +134,7 @@ impl Command for Warn {
                 &ctx.message.author.id.to_string(),
                 &reason,
             );
-            // Canal de log configurado no guilds.json (MOD_LOG_CHANNEL_ID).
+            // Log channel configured in guilds.json (MOD_LOG_CHANNEL_ID).
             let log_channel = flush_framework::GuildStore::with_default_path()
                 .get(&guild.to_string())
                 .mod_log_channel_id
@@ -146,7 +146,7 @@ impl Command for Warn {
                 target: target.as_ref(),
                 reason: &reason,
                 success_icon: "⚠️",
-                success_description: &format!("**{mention}** recebeu um warning."),
+                success_description: &format!("**{mention}** received a warning."),
                 case_id: case.id,
                 extra: None,
                 log_channel,
@@ -158,7 +158,7 @@ impl Command for Warn {
     }
 }
 
-/// Hooks de exemplo: relata entradas de membro no stdout.
+/// Example hooks: reports member joins on stdout.
 struct JoinLogger;
 
 impl Hooks for JoinLogger {
@@ -167,7 +167,7 @@ impl Hooks for JoinLogger {
             match ev {
                 HookEvent::MemberJoin { guild, member } => {
                     println!(
-                        "👤 {} ({}) entrou em {} ({})",
+                        "👤 {} ({}) joined {} ({})",
                         member.user.username, member.user.id, guild.name, guild.id
                     );
                 }
@@ -183,7 +183,7 @@ impl Hooks for JoinLogger {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("FLUXER_BOT_TOKEN").is_err() {
-        return Err("FLUXER_BOT_TOKEN não definido".into());
+        return Err("FLUXER_BOT_TOKEN is not set".into());
     }
     async_std::task::block_on(run())
 }
