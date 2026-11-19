@@ -92,7 +92,8 @@ flush check ./my-bot --build
 
 `check` does not log in and does not prove the token or remote permissions.
 `--build` runs `cargo check` in the project, which is what validates the
-command code. The command list itself only exists inside the compiled bot, so
+command code. With `--json` the compiler diagnostics are hidden so stderr
+stays a single JSON object; run it without `--json` to read them. The command list itself only exists inside the compiled bot, so
 it is not part of this report (`!help` lists it at runtime).
 
 ## Offline diagnosis (`doctor`)

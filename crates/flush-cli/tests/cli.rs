@@ -104,6 +104,15 @@ fn init_check_doctor_and_run_guard() {
     assert_eq!(run.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&run.stderr).contains("[TOKEN_MISSING]"));
 
+    // A failing build keeps stderr a single JSON object.
+    std::fs::write(project.join("Cargo.toml"), "this is not a manifest").unwrap();
+    let broken = flush(&project, &["check", "--json", "--build"]);
+    assert_eq!(broken.status.code(), Some(1));
+    assert_eq!(
+        json(&String::from_utf8_lossy(&broken.stderr))["code"],
+        "BUILD_FAILED"
+    );
+
     std::fs::write(
         project.join("flush.toml"),
         "name = \"my-bot\"\nunknown = true\n",

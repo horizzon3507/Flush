@@ -37,10 +37,23 @@ fn check(input: Option<&Path>, json: bool, build: bool) -> Result<i32, CliError>
                 .args(["check", "--quiet"])
                 .current_dir(dir)
                 .stdout(std::process::Stdio::null())
+                // With --json, stderr carries exactly one JSON object on failure.
+                .stderr(if json {
+                    std::process::Stdio::null()
+                } else {
+                    std::process::Stdio::inherit()
+                })
                 .status()
                 .map_err(|e| CliError::new("BUILD_FAILED", format!("Cannot run cargo: {e}.")))?;
         if !status.success() {
-            return Err(CliError::new("BUILD_FAILED", "cargo check failed."));
+            return Err(CliError::new(
+                "BUILD_FAILED",
+                if json {
+                    "cargo check failed. Run it without --json to see the compiler diagnostics."
+                } else {
+                    "cargo check failed."
+                },
+            ));
         }
     }
     if json {
