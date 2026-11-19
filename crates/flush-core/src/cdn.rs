@@ -1,8 +1,8 @@
-//! URLs de CDN da Fluxer (espelho de `Cdn.ts` do `@fluxerjs/core`).
+//! Fluxer CDN URLs (mirrors `Cdn.ts` in `@fluxerjs/core`).
 //!
-//! Avatar customizado vive em `fluxerusercontent.com`; o fallback usa
-//! `fluxerstatic.com/avatars/{id % 6}.png`. Hash `a_*` serve `gif`, o resto
-//! `png`; `size` sofre snap na escada oficial (ícone: 128–1024).
+//! Custom avatars live on `fluxerusercontent.com`; the fallback uses
+//! `fluxerstatic.com/avatars/{id % 6}.png`. `a_*` hashes serve `gif`, the rest
+//! `png`; `size` snaps to the official ladder (icon: 128–1024).
 
 use crate::snowflake::Snowflake;
 
@@ -15,6 +15,53 @@ const SIZE_LADDER: &[u32] = &[
 ];
 const ICON_MIN: u32 = 128;
 const ICON_MAX: u32 = 1024;
+
+/// Size classes of `CDN_ASSET_CLASS_RANGE` in `@fluxerjs/core`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetClass {
+    Icon,
+    Banner,
+    Emoji,
+    Sticker,
+}
+
+impl AssetClass {
+    fn range(self) -> (u32, u32) {
+        match self {
+            Self::Icon => (ICON_MIN, ICON_MAX),
+            Self::Banner => (480, 2400),
+            Self::Emoji => (32, 512),
+            Self::Sticker => (128, 512),
+        }
+    }
+}
+
+/// Guild asset folders served by the media CDN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuildAsset {
+    Icon,
+    Banner,
+    Splash,
+}
+
+/// Snaps `requested` to the official ladder inside the class range.
+pub fn snap_size(requested: u32, class: AssetClass) -> u32 {
+    let (min, max) = class.range();
+    let clamped = nearest(requested, SIZE_LADDER).clamp(min, max);
+    let allowed: Vec<u32> = SIZE_LADDER
+        .iter()
+        .copied()
+        .filter(|s| (min..=max).contains(s))
+        .collect();
+    nearest(clamped, &allowed)
+}
+
+fn size_query(size: Option<u32>, class: AssetClass) -> String {
+    match size {
+        Some(s) if s > 0 => format!("?size={}", snap_size(s, class)),
+        _ => String::new(),
+    }
+}
 
 fn nearest(requested: u32, candidates: &[u32]) -> u32 {
     let mut best = candidates[0];
@@ -48,7 +95,7 @@ fn extension(hash: &str) -> &'static str {
     }
 }
 
-/// `cdnAvatarURL`: `None` para hash vazio, como no SDK.
+/// `cdnAvatarURL`: `None` for an empty hash, as in the SDK.
 pub fn avatar_url(user_id: Snowflake, hash: &str, size: Option<u32>) -> Option<String> {
     if hash.is_empty() {
         return None;
@@ -66,15 +113,100 @@ pub fn avatar_url(user_id: Snowflake, hash: &str, size: Option<u32>) -> Option<S
     Some(url)
 }
 
-/// `cdnDefaultAvatarURL`: índice `id % 6` sobre o CDN estático.
+/// `cdnDefaultAvatarURL`: index `id % 6` on the static CDN.
 pub fn default_avatar_url(user_id: Snowflake) -> String {
     format!("{}/avatars/{}.png", STATIC_CDN_URL, user_id.get() % 6)
 }
 
-/// `cdnDisplayAvatarURL`: customizado ou fallback, nunca vazio.
+/// `cdnDisplayAvatarURL`: custom or fallback, never empty.
 pub fn display_avatar_url(user_id: Snowflake, hash: Option<&str>, size: Option<u32>) -> String {
     hash.and_then(|h| avatar_url(user_id, h, size))
         .unwrap_or_else(|| default_avatar_url(user_id))
+}
+
+/// `cdnBannerURL`: user or guild banner; `None` for an empty hash.
+pub fn banner_url(resource_id: Snowflake, hash: &str, size: Option<u32>) -> Option<String> {
+    if hash.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{CDN_URL}/banners/{resource_id}/{hash}.{}{}",
+        extension(hash),
+        size_query(size, AssetClass::Banner)
+    ))
+}
+
+/// `cdnMemberAvatarURL`: per-guild avatar.
+pub fn member_avatar_url(
+    guild_id: Snowflake,
+    user_id: Snowflake,
+    hash: &str,
+    size: Option<u32>,
+) -> Option<String> {
+    if hash.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{CDN_URL}/guilds/{guild_id}/users/{user_id}/avatars/{hash}.{}{}",
+        extension(hash),
+        size_query(size, AssetClass::Icon)
+    ))
+}
+
+/// `cdnMemberBannerURL`: per-guild banner.
+pub fn member_banner_url(
+    guild_id: Snowflake,
+    user_id: Snowflake,
+    hash: &str,
+    size: Option<u32>,
+) -> Option<String> {
+    if hash.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{CDN_URL}/guilds/{guild_id}/users/{user_id}/banners/{hash}.{}{}",
+        extension(hash),
+        size_query(size, AssetClass::Banner)
+    ))
+}
+
+/// `cdnGuildAssetURL`: always `png`, as in the SDK.
+pub fn guild_asset_url(
+    kind: GuildAsset,
+    guild_id: Snowflake,
+    hash: &str,
+    size: Option<u32>,
+) -> Option<String> {
+    if hash.is_empty() {
+        return None;
+    }
+    let (folder, class) = match kind {
+        GuildAsset::Icon => ("icons", AssetClass::Icon),
+        GuildAsset::Banner => ("banners", AssetClass::Banner),
+        GuildAsset::Splash => ("splashes", AssetClass::Banner),
+    };
+    Some(format!(
+        "{CDN_URL}/{folder}/{guild_id}/{hash}.png{}",
+        size_query(size, class)
+    ))
+}
+
+/// `cdnEmojiURL`.
+pub fn emoji_url(emoji_id: Snowflake, animated: bool, size: Option<u32>) -> String {
+    let ext = if animated { "gif" } else { "png" };
+    format!(
+        "{CDN_URL}/emojis/{emoji_id}.{ext}{}",
+        size_query(size, AssetClass::Emoji)
+    )
+}
+
+/// `cdnStickerURL`.
+pub fn sticker_url(sticker_id: Snowflake, animated: bool, size: Option<u32>) -> String {
+    let ext = if animated { "gif" } else { "png" };
+    format!(
+        "{CDN_URL}/stickers/{sticker_id}.{ext}{}",
+        size_query(size, AssetClass::Sticker)
+    )
 }
 
 #[cfg(test)]

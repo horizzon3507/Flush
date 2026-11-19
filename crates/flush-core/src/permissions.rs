@@ -1,5 +1,5 @@
-/// Bitfield de permissões do Fluxer (`1 << n`, u64).
-/// Espelho da tabela oficial `Roles and permissions`.
+/// Fluxer permission bitfield (`1 << n`, u64).
+/// Mirrors the official `Roles and permissions` table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Permissions(pub u64);
 
@@ -94,7 +94,7 @@ pub(crate) mod wire {
         impl Visitor<'_> for V {
             type Value = u64;
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("bitfield como string decimal ou inteiro")
+                f.write_str("a bitfield as a decimal string or integer")
             }
             fn visit_str<E: de::Error>(self, v: &str) -> Result<u64, E> {
                 v.trim().parse().map_err(E::custom)

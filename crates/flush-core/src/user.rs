@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::snowflake::Snowflake;
 
-/// Usuário parcial (mensagens, membros, webhooks).
-/// Espelho de `APIUserPartial` do `@fluxerjs/types`.
+/// Partial user (messages, members, webhooks).
+/// Mirrors `APIUserPartial` in `@fluxerjs/types`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartialUser {
     pub id: Snowflake,
@@ -39,7 +39,7 @@ impl PartialUser {
     }
 }
 
-/// Usuário completo (`GET /users/@me`).
+/// Full user (`GET /users/@me`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct User {
     #[serde(flatten)]

@@ -1,12 +1,12 @@
-//! Helpers serde tolerantes ao wire do Fluxer.
+//! Serde helpers tolerant of the Fluxer wire format.
 //!
-//! O Gateway/REST mandam `null` em listas vazias e usam inteiros para enums.
-//! Estes helpers convertem `null` em default em vez de falhar.
+//! Gateway and REST send `null` for empty lists and integers for enums.
+//! These helpers turn `null` into the default instead of failing.
 
 use serde::{Deserialize, Deserializer};
 
-/// `Vec<T>` que aceita `null` como vazio.
-/// Uso: `#[serde(default, deserialize_with = "crate::wire::null_vec")]`.
+/// `Vec<T>` that accepts `null` as empty.
+/// Usage: `#[serde(default, deserialize_with = "crate::wire::null_vec")]`.
 pub fn null_vec<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -16,8 +16,8 @@ where
     Ok(opt.unwrap_or_default())
 }
 
-/// `Option<T>` que aceita `null` como `None` (uso explícito evita
-/// ambiguidade com o `Option::deserialize` normal em alguns tipos).
+/// `Option<T>` that accepts `null` as `None` (explicit use avoids
+/// ambiguity with the plain `Option::deserialize` on some types).
 pub fn null_to_none<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -26,7 +26,7 @@ where
     Option::deserialize(d)
 }
 
-/// `bool` que aceita `null` como `false`.
+/// `bool` that accepts `null` as `false`.
 pub fn null_bool<'de, D>(d: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
@@ -35,7 +35,7 @@ where
     Ok(opt.unwrap_or(false))
 }
 
-/// `u64` que aceita `null` como `0`.
+/// `u64` that accepts `null` as `0`.
 pub fn null_u64<'de, D>(d: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,
@@ -44,7 +44,7 @@ where
     Ok(opt.unwrap_or(0))
 }
 
-/// `u32` que aceita `null` como `0`.
+/// `u32` that accepts `null` as `0`.
 pub fn null_u32<'de, D>(d: D) -> Result<u32, D::Error>
 where
     D: Deserializer<'de>,
@@ -53,7 +53,7 @@ where
     Ok(opt.unwrap_or(0))
 }
 
-/// `i32` que aceita `null` como `0`.
+/// `i32` that accepts `null` as `0`.
 pub fn null_i32<'de, D>(d: D) -> Result<i32, D::Error>
 where
     D: Deserializer<'de>,
@@ -62,7 +62,7 @@ where
     Ok(opt.unwrap_or(0))
 }
 
-/// `i64` que aceita `null` como `0`.
+/// `i64` that accepts `null` as `0`.
 pub fn null_i64<'de, D>(d: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,

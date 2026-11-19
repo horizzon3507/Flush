@@ -1,11 +1,11 @@
-//! Router: loop Gateway → parse → dispatch (espelho de
+//! Router: Gateway loop → parse → dispatch (mirrors
 //! `Sour events/messageCreate.ts` + `Jully Bot.js::handleMessage` + `index.ts`).
 //!
 //! - `Bot::run`: discovery via `RestClient::new` → hello/identify/resume loop
 //!   via `GatewayClient` → `MESSAGE_CREATE` → `handle_message`.
-//! - Dedup por `message.id` (Sour `processingMessages`), ignora bots/self,
-//!   prefixo por guild (`GuildStore`), aliases, cooldown com reply "Aguarde Ns",
-//!   resposta de menção com o prefixo (Jully), presença rotativa 45s (Sour).
+//! - Dedup by `message.id` (Sour `processingMessages`), ignores bots/self,
+//!   per-guild prefix (`GuildStore`), aliases, cooldown with a "wait Ns" reply,
+//!   replies to a mention with the prefix (Jully), rotates presence every 45s (Sour).
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -27,18 +27,18 @@ use crate::parse::parse_prefix_body;
 #[derive(Debug, Clone)]
 pub struct BotConfig {
     pub token: String,
-    /// Prefixo padrão (env `PREFIX` ou `!`); por guild prevalece o store.
+    /// Default prefix (env `PREFIX` or `!`); the per-guild store value wins.
     pub default_prefix: String,
-    /// Origem para discovery (default `https://fluxer.app`).
+    /// Origin for discovery (default `https://fluxer.app`).
     pub origin: Option<String>,
-    /// Base/api/gateway explícitos (pulam discovery).
+    /// Explicit API base and gateway (skip discovery).
     pub api_base: Option<String>,
     pub gateway_url: Option<String>,
-    /// Caminho do `guilds.json` (default `./data/guilds.json`).
+    /// Path to `guilds.json` (default `./data/guilds.json`).
     pub data_path: Option<std::path::PathBuf>,
-    /// Presenças rotativas a cada 45s (espelho do Sour). Vazio = sem rotação.
+    /// Presence lines rotated every 45s (mirrors Sour). Empty = no rotation.
     pub presence_lines: Vec<String>,
-    /// Cooldown padrão por comando quando o comando não define (ms, 0 = sem).
+    /// Default per-command cooldown when the command sets none (ms, 0 = off).
     pub default_cooldown_ms: u64,
 }
 
@@ -68,7 +68,7 @@ struct Shared {
     members: HashMap<(Snowflake, Snowflake), MemberUser>,
 }
 
-/// Evento repassado ao [`Hooks::dispatch`].
+/// Event handed to [`Hooks::dispatch`].
 pub enum HookEvent<'a> {
     Ready {
         session_id: &'a str,
@@ -83,14 +83,16 @@ pub enum HookEvent<'a> {
         user: &'a PartialUser,
     },
     Message(&'a Message),
+    /// Every gateway event, before the bot updates its cache.
+    Raw(&'a Event),
 }
 
-/// Hooks de eventos do cache do `Bot` (ready, guilds, membros, mensagens).
+/// Event hooks from the `Bot` cache (ready, guilds, members, messages).
 pub trait Hooks: Send + Sync {
     fn dispatch<'a>(&'a self, ev: HookEvent<'a>) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 }
 
-/// Implementação vazia (para `hooks: None`).
+/// Empty implementation (for `hooks: None`).
 pub struct NoHooks;
 
 impl Hooks for NoHooks {
@@ -109,12 +111,15 @@ pub struct Bot {
     presence_idx: usize,
     hooks: Option<Arc<dyn Hooks>>,
     help: Option<Arc<crate::help::Help>>,
+    middleware: Vec<Arc<dyn crate::middleware::Middleware>>,
+    collectors: crate::collector::Collectors,
+    scheduler: crate::scheduler::Scheduler,
 }
 
 impl Bot {
     pub fn new(config: BotConfig) -> Result<Self, CommandError> {
         if config.token.trim().is_empty() {
-            return Err(CommandError::User("FLUXER_BOT_TOKEN não definido.".into()));
+            return Err(CommandError::User("FLUXER_BOT_TOKEN is not set.".into()));
         }
         let store = match config.data_path.clone() {
             Some(p) => GuildStore::new(p),
@@ -136,17 +141,35 @@ impl Bot {
             presence_idx: 0,
             hooks: None,
             help: None,
+            middleware: Vec::new(),
+            collectors: crate::collector::Collectors::new(),
+            scheduler: crate::scheduler::Scheduler::new(),
         })
     }
 
-    /// Registra hooks de eventos (ready/guild/membros/mensagens).
+    /// Adds a middleware; they run in insertion order before each command.
+    pub fn middleware(mut self, mw: impl crate::middleware::Middleware + 'static) -> Self {
+        self.middleware.push(Arc::new(mw));
+        self
+    }
+
+    /// Registry fed with this bot's messages and reactions.
+    pub fn collectors(&self) -> crate::collector::Collectors {
+        self.collectors.clone()
+    }
+
+    pub fn scheduler(&self) -> crate::scheduler::Scheduler {
+        self.scheduler.clone()
+    }
+
+    /// Registers event hooks (ready/guild/members/messages).
     pub fn hooks(mut self, hooks: impl Hooks + 'static) -> Self {
         self.hooks = Some(Arc::new(hooks));
         self
     }
 
-    /// Registra o comando `help` embutido, listando os demais comandos.
-    /// O snapshot é sincronizado no `run()`.
+    /// Registers the built-in `help` command, which lists the other commands.
+    /// The snapshot is synced in `run()`.
     pub fn enable_help(mut self) -> Self {
         if self.help.is_none() {
             let h = Arc::new(crate::help::Help::new());
@@ -156,7 +179,7 @@ impl Bot {
         self
     }
 
-    /// Sincroniza o snapshot do `help` (chamado internamente no `run()`).
+    /// Syncs the `help` snapshot (called internally by `run()`).
     pub fn refresh_help(&mut self) {
         if let Some(h) = &self.help {
             h.refresh(&self.commands);
@@ -172,7 +195,7 @@ impl Bot {
         &self.commands
     }
 
-    /// Loop principal: REST (discovery) → Gateway → dispatch até erro fatal.
+    /// Main loop: REST (discovery) → Gateway → dispatch until a fatal error.
     pub async fn run(&mut self) -> Result<(), CommandError> {
         let rest = RestClient::new(RestConfig {
             token: self.config.token.clone(),
@@ -185,7 +208,7 @@ impl Bot {
         .map_err(CommandError::Rest)?;
         let me = rest.current_user().await.map_err(CommandError::Rest)?;
         info!(
-            "flush: login como {} ({})",
+            "flush: logged in as {} ({})",
             me.partial.username, me.partial.id
         );
         {
@@ -207,13 +230,13 @@ impl Bot {
             GatewayClient::new(gw_cfg).map_err(|e| CommandError::Internal(e.to_string()))?;
         self.refresh_help();
         loop {
-            // Timeout de 45s = tick da presença rotativa (espelho do Sour).
+            // 45s timeout = rotating presence tick (mirrors Sour).
             let next = gw.next_event();
             match async_std::future::timeout(std::time::Duration::from_secs(45), next).await {
                 Ok(Ok(Some(ev))) => self.on_event(ev).await,
                 Ok(Ok(None)) => {}
                 Ok(Err(e)) => {
-                    error!("flush: gateway erro: {e}");
+                    error!("flush: gateway error: {e}");
                     return Err(CommandError::Internal(e.to_string()));
                 }
                 Err(_) => {
@@ -224,7 +247,40 @@ impl Bot {
     }
 
     async fn on_event(&mut self, ev: Event) {
+        if let Some(h) = &self.hooks {
+            h.dispatch(HookEvent::Raw(&ev)).await;
+        }
+        match &ev {
+            Event::MessageCreate(m) => self.collectors.offer_message(m),
+            Event::MessageReactionAdd {
+                channel_id,
+                message_id,
+                user_id,
+                emoji,
+                ..
+            } => self
+                .collectors
+                .offer_reaction(&crate::collector::CollectedReaction {
+                    channel_id: *channel_id,
+                    message_id: *message_id,
+                    user_id: *user_id,
+                    emoji: emoji.clone(),
+                }),
+            _ => {}
+        }
         match ev {
+            Event::ThreadCreate(c) | Event::ThreadUpdate(c) => {
+                self.shared.write().await.channels.insert(c.id, c);
+            }
+            Event::ThreadDelete { id, .. } => {
+                self.shared.write().await.channels.remove(&id);
+            }
+            Event::ChannelUpdateBulk { channels } => {
+                let mut s = self.shared.write().await;
+                for c in channels {
+                    s.channels.insert(c.id, c);
+                }
+            }
             Event::Ready(r) => {
                 info!(
                     "flush: ready session={} guilds={}",
@@ -327,7 +383,7 @@ impl Bot {
             Event::MessageCreate(m) => self.handle_message(m).await,
             Event::MessageUpdate(m) => {
                 debug!(
-                    "flush: message update {} (edit tratado pelo automod externo)",
+                    "flush: message update {} (edits are left to external automod)",
                     m.id
                 );
             }
@@ -358,7 +414,7 @@ impl Bot {
         if let Some(h) = &self.hooks {
             h.dispatch(HookEvent::Message(&message)).await;
         }
-        // Cap de dedup (Sour usa Set sem limpeza; aqui evitamos crescimento infinito).
+        // Dedup cap (Sour uses a Set that never shrinks; this avoids unbounded growth).
         if self.seen.len() > 20_000 {
             self.seen.clear();
             self.seen.insert(message.id);
@@ -372,12 +428,12 @@ impl Bot {
             stored
         };
         let Some(parsed) = parse_prefix_body(&message.content, &prefix, false) else {
-            // Menção → responde o prefixo (espelho do Jully).
+            // Mention → reply with the prefix (mirrors Jully).
             if let Some(id) = bot_id {
                 let mentioned = message.mentions.iter().any(|u| u.id == id);
                 if mentioned {
                     let text = format!(
-                        "👋 Olá **{}**! Meu prefixo é `{prefix}` — use `{prefix}help` para ver meus comandos!",
+                        "👋 Hi **{}**! My prefix is `{prefix}`. Use `{prefix}help` to see my commands!",
                         message.author.username
                     );
                     let payload = flush_core::MessageSend::text(text);
@@ -404,7 +460,7 @@ impl Bot {
                 .remaining(&message.author.id.to_string(), &cmd_name)
                 .unwrap_or(1);
             let payload = flush_core::MessageSend::text(format!(
-                "⏱️ Aguarde **{remaining}s** para usar este comando novamente."
+                "⏱️ Wait **{remaining}s** before using this command again."
             ));
             let _ = rest
                 .reply(message.channel_id, &message, payload, false)
@@ -416,11 +472,11 @@ impl Bot {
                 .set(&message.author.id.to_string(), &cmd_name, cooldown);
         }
         info!(
-            "flush: comando {prefix}{cmd_name} por {} ({})",
+            "flush: command {prefix}{cmd_name} by {} ({})",
             message.author.username, message.id
         );
 
-        // Snapshots de leitura para o handler (guild/canal/membros do cache).
+        // Read snapshots for the handler (guild/channel/members from the cache).
         let s = self.shared.read().await;
         let guild = message.guild_id.and_then(|g| s.guilds.get(&g).cloned());
         let channel = s.channels.get(&message.channel_id).cloned();
@@ -442,11 +498,19 @@ impl Bot {
             member,
             bot_member,
         };
-        // Gate de permissão do comando (dono do servidor e bot com permissão).
+        for mw in &self.middleware {
+            if let crate::middleware::Flow::Stop(reply) = mw.before(&cmd_name, &ctx).await {
+                if let Some(text) = reply {
+                    let _ = ctx.reply_no_ping(text).await;
+                }
+                return;
+            }
+        }
+        // Command permission gate (server owner passes; the bot needs the permission too).
         if let Some(action) = cmd.required_permission() {
             let Some(guild_ref) = ctx.guild.as_ref() else {
                 let _ = ctx
-                    .reply_no_ping(plain_error("Este comando só funciona em servidores."))
+                    .reply_no_ping(plain_error("This command only works in servers."))
                     .await;
                 return;
             };
@@ -461,7 +525,7 @@ impl Bot {
                 action,
                 ctx.channel.as_ref(),
                 executor_is_owner,
-                "Você precisa",
+                "You need",
             ) {
                 let _ = ctx.reply_no_ping(err).await;
                 return;
@@ -477,21 +541,21 @@ impl Bot {
                 action,
                 ctx.channel.as_ref(),
                 bot_is_owner,
-                "Meu bot precisa",
+                "I need",
             ) {
                 let _ = ctx.reply_no_ping(err).await;
                 return;
             }
         }
-        // `commands` imutável durante execução: re-resolve para pegar a referência.
+        // `commands` is immutable while executing: resolve again to get the reference.
         let Some(cmd) = crate::command::parsed_lookup(&parsed, &self.commands) else {
             return;
         };
         if let Err(e) = cmd.execute(ctx).await {
-            error!("flush: erro em {cmd_name}: {e}");
+            error!("flush: error in {cmd_name}: {e}");
             let text = match &e {
                 CommandError::User(msg) => plain_error(msg),
-                _ => plain_error("Ocorreu um erro ao executar este comando."),
+                _ => plain_error("Something went wrong while running this command."),
             };
             let payload = flush_core::MessageSend::text(text);
             let _ = rest
@@ -512,7 +576,7 @@ impl Bot {
             ..Default::default()
         };
         if let Err(e) = gw.set_presence(&presence).await {
-            warn!("flush: presença falhou: {e}");
+            warn!("flush: presence update failed: {e}");
         }
     }
 }

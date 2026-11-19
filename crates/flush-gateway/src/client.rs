@@ -1,7 +1,7 @@
-//! Cliente do Gateway: conexão, Hello/Identify/Resume/Heartbeat e loop de Dispatch.
+//! Gateway client: connection, Hello/Identify/Resume/Heartbeat and the Dispatch loop.
 //!
-//! Espelha o fluxo do `jully-fluxer/src/core/Bot.js` e do `Client` do
-//! `@fluxerjs/core`, mas sobre `async-std` + `async-tungstenite`.
+//! Mirrors the flow of `jully-fluxer/src/core/Bot.js` and of `Client` in
+//! `@fluxerjs/core`, on `async-std` + `async-tungstenite`.
 
 use std::time::{Duration, Instant};
 
@@ -22,37 +22,37 @@ use crate::payload::{
 };
 #[derive(Debug, Error)]
 pub enum ConnectError {
-    #[error("token vazio")]
+    #[error("empty token")]
     EmptyToken,
-    #[error("URL do gateway inválida: {0}")]
+    #[error("invalid gateway URL: {0}")]
     BadUrl(String),
     #[error("websocket: {0}")]
     Ws(String),
-    #[error("hello inválido: {0}")]
+    #[error("invalid hello: {0}")]
     BadHello(String),
-    #[error("token inválido (4004)")]
+    #[error("invalid token (4004)")]
     InvalidToken,
-    #[error("sharding necessário (4011): o bot resolve >2500 guilds neste shard")]
+    #[error("sharding required (4011): the bot resolves >2500 guilds on this shard")]
     ShardingRequired,
-    #[error("shard inválido (4010)")]
+    #[error("invalid shard (4010)")]
     InvalidShard,
-    #[error("versão de API inválida (4012)")]
+    #[error("invalid API version (4012)")]
     BadVersion,
-    #[error("serialização: {0}")]
+    #[error("serialization: {0}")]
     Serde(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
     pub token: String,
-    /// URL base do gateway (sem query ou com query parcial).
-    /// Ex.: `wss://gateway.fluxer.app` — o cliente completa `?v=1&encoding=json`.
+    /// Gateway base URL (no query, or a partial one).
+    /// E.g. `wss://gateway.fluxer.app`; the client appends `?v=1&encoding=json`.
     pub gateway_url: String,
     pub properties: IdentifyProperties,
     pub presence: Option<Presence>,
     pub ignored_events: Vec<String>,
     pub shard: Option<(u32, u32)>,
-    /// Backoff máximo entre reconexões (padrão 60s).
+    /// Maximum backoff between reconnects (default 60s).
     pub max_backoff: Duration,
 }
 
@@ -81,9 +81,9 @@ impl ClientConfig {
 }
 
 pub fn gateway_url_with_params(base: &str) -> String {
-    // ⚠️ Barra obrigatória antes do query: o tungstenite ≥ 0.30 serializa
-    // `path_and_query` cru — sem path, o request sai como
-    // `GET ?v=1&encoding=json` e o gateway responde HTTP 400 Bad Request.
+    // The slash before the query is required: tungstenite ≥ 0.30 serializes
+    // `path_and_query` raw, so without a path the request goes out as
+    // `GET ?v=1&encoding=json` and the gateway answers HTTP 400 Bad Request.
     let base = base.trim();
     let mut url = match base.split_once('?') {
         Some((host, query)) => {
@@ -112,36 +112,10 @@ pub fn gateway_url_with_params(base: &str) -> String {
     url
 }
 
-#[cfg(test)]
-mod tests_url {
-    use super::*;
-
-    #[test]
-    fn adiciona_barra_e_params() {
-        assert_eq!(
-            gateway_url_with_params("wss://gateway.fluxer.app"),
-            "wss://gateway.fluxer.app/?v=1&encoding=json"
-        );
-        assert_eq!(
-            gateway_url_with_params("wss://gateway.fluxer.app/"),
-            "wss://gateway.fluxer.app/?v=1&encoding=json"
-        );
-        assert_eq!(
-            gateway_url_with_params("wss://gw.example.com/?v=1&encoding=json"),
-            "wss://gw.example.com/?v=1&encoding=json"
-        );
-        assert_eq!(
-            gateway_url_with_params("wss://gw.example.com/?v=1"),
-            "wss://gw.example.com/?v=1&encoding=json"
-        );
-    }
-}
-
-
 #[allow(deprecated)]
 type WsStream = async_tungstenite::WebSocketStream<ConnectStream>;
 
-/// Cliente stateful: mantém `seq`/`session_id` para Resume após quedas.
+/// Stateful client: keeps `seq`/`session_id` to Resume after drops.
 pub struct GatewayClient {
     config: ClientConfig,
     ws: Option<WsStream>,
@@ -178,9 +152,9 @@ impl GatewayClient {
         self.ready
     }
 
-    /// Próximo evento tipado. Retorna `Ok(None)` em heartbeats ACKs e
-    /// janelas sem Dispatch (o chamador continua o loop).
-    /// Reconexão com Resume é interna; erro fatal só em token/shard/versão.
+    /// Next typed event. Returns `Ok(None)` on heartbeat ACKs and
+    /// windows without a Dispatch (the caller keeps looping).
+    /// Reconnecting with Resume is internal; only token/shard/version errors are fatal.
     pub async fn next_event(&mut self) -> Result<Option<Event>, ConnectError> {
         loop {
             if self.ws.is_none() {
@@ -198,14 +172,14 @@ impl GatewayClient {
         }
     }
 
-    /// Envia Presence Update (op 3).
+    /// Sends a Presence Update (op 3).
     pub async fn set_presence(&mut self, presence: &Presence) -> Result<(), ConnectError> {
         let body =
             serde_json::to_value(presence).map_err(|e| ConnectError::Serde(e.to_string()))?;
         self.send_command(Opcode::PresenceUpdate, body).await
     }
 
-    /// Pede chunks de membros (op 8, uma guild por vez para bots).
+    /// Requests member chunks (op 8, one guild at a time for bots).
     pub async fn request_guild_members(
         &mut self,
         guild_id: flush_core::Snowflake,
@@ -268,7 +242,7 @@ impl GatewayClient {
             .await
             .map_err(|e| ConnectError::Ws(e.to_string()))?;
         self.ws = Some(ws);
-        // Hello é o primeiro frame (op 10).
+        // Hello is the first frame (op 10).
         let hello = self.read_payload().await?;
         if hello.opcode() != Opcode::Hello {
             return Err(ConnectError::BadHello(format!(
@@ -280,7 +254,7 @@ impl GatewayClient {
             .d
             .clone()
             .and_then(|v| serde_json::from_value(v).ok())
-            .ok_or_else(|| ConnectError::BadHello("sem heartbeat_interval".into()))?;
+            .ok_or_else(|| ConnectError::BadHello("missing heartbeat_interval".into()))?;
         self.heartbeat_interval = Duration::from_millis(hello_body.heartbeat_interval.max(5_000));
         info!(
             "gateway: hello, heartbeat a cada {}ms",
@@ -296,7 +270,7 @@ impl GatewayClient {
             let body =
                 serde_json::to_value(&resume).map_err(|e| ConnectError::Serde(e.to_string()))?;
             self.send_command(Opcode::Resume, body).await?;
-            debug!("gateway: resume enviado");
+            debug!("gateway: resume sent");
         } else {
             let identify = IdentifyPayload {
                 token: self.config.token.clone(),
@@ -308,7 +282,7 @@ impl GatewayClient {
             let body =
                 serde_json::to_value(&identify).map_err(|e| ConnectError::Serde(e.to_string()))?;
             self.send_command(Opcode::Identify, body).await?;
-            debug!("gateway: identify enviado");
+            debug!("gateway: identify sent");
         }
         self.backoff_attempts = 0;
         Ok(())
@@ -320,7 +294,7 @@ impl GatewayClient {
             let msg = ws
                 .next()
                 .await
-                .ok_or_else(|| ConnectError::Ws("stream fechado".into()))?;
+                .ok_or_else(|| ConnectError::Ws("stream closed".into()))?;
             let msg = msg.map_err(|e| ConnectError::Ws(e.to_string()))?;
             match msg {
                 WsMessage::Text(text) => {
@@ -352,8 +326,8 @@ impl GatewayClient {
             }
             let payload = match async_std::future::timeout(remaining, self.read_payload()).await {
                 Ok(Ok(p)) => p,
-                Ok(Err(ConnectError::Ws(msg))) if msg.starts_with("stream fechado") => {
-                    warn!("gateway: transporte fechado, retomando em 60s de retenção");
+                Ok(Err(ConnectError::Ws(msg))) if msg.starts_with("stream closed") => {
+                    warn!("gateway: transport closed, resuming within the 60s retention window");
                     return Ok(Step::Reconnect);
                 }
                 Ok(Err(e)) => return Err(e),
@@ -388,8 +362,8 @@ impl GatewayClient {
                     return Ok(Step::Event(Box::new(ev)));
                 }
                 Opcode::Heartbeat => {
-                    // Servidor pedindo heartbeat imediato (d=null ~90% do intervalo).
-                    debug!("gateway: heartbeat solicitado pelo servidor");
+                    // Server asking for an immediate heartbeat (d=null at ~90% of the interval).
+                    debug!("gateway: heartbeat requested by the server");
                     self.send_heartbeat().await?;
                 }
                 Opcode::HeartbeatAck => {
@@ -397,11 +371,11 @@ impl GatewayClient {
                     return Ok(Step::NoEvent);
                 }
                 Opcode::Reconnect => {
-                    warn!("gateway: reconnect solicitado (op 7)");
+                    warn!("gateway: reconnect requested (op 7)");
                     return Ok(Step::Reconnect);
                 }
                 Opcode::InvalidSession => {
-                    warn!("gateway: sessão inválida (op 9), re-identificando");
+                    warn!("gateway: invalid session (op 9), re-identifying");
                     self.session_id = None;
                     self.ready = false;
                     return Ok(Step::Reconnect);
@@ -415,7 +389,7 @@ impl GatewayClient {
                     }
                 }
                 Opcode::GatewayError => {
-                    warn!("gateway: erro op12: {:?}", payload.d);
+                    warn!("gateway: op 12 error: {:?}", payload.d);
                     return Ok(Step::NoEvent);
                 }
                 _ => {
@@ -433,7 +407,7 @@ impl GatewayClient {
             .saturating_mul(exp as u32)
             .min(self.config.max_backoff);
         warn!(
-            "gateway: reconectando em {delay:?} (tentativa {})",
+            "gateway: reconnecting in {delay:?} (attempt {})",
             self.backoff_attempts
         );
         async_std::task::sleep(delay).await;
@@ -453,6 +427,31 @@ fn close_to_error(code: Option<u16>) -> ConnectError {
         Some(CloseCode::InvalidShard) => ConnectError::InvalidShard,
         Some(CloseCode::InvalidApiVersion) => ConnectError::BadVersion,
         Some(c) => ConnectError::Ws(format!("close {c:?}")),
-        None => ConnectError::Ws("close sem código".into()),
+        None => ConnectError::Ws("close without a code".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests_url {
+    use super::*;
+
+    #[test]
+    fn adiciona_barra_e_params() {
+        assert_eq!(
+            gateway_url_with_params("wss://gateway.fluxer.app"),
+            "wss://gateway.fluxer.app/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gateway.fluxer.app/"),
+            "wss://gateway.fluxer.app/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gw.example.com/?v=1&encoding=json"),
+            "wss://gw.example.com/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gw.example.com/?v=1"),
+            "wss://gw.example.com/?v=1&encoding=json"
+        );
     }
 }

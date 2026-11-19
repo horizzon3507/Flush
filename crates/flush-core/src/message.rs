@@ -4,7 +4,7 @@ use crate::embed::Embed;
 use crate::snowflake::Snowflake;
 use crate::user::PartialUser;
 use crate::wire::{null_bool, null_vec};
-/// Tipo de mensagem como inteiro no wire (subset usado por bots).
+/// Message type, an integer on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum MessageType {
@@ -12,10 +12,15 @@ pub enum MessageType {
     Default = 0,
     RecipientAdd = 1,
     RecipientRemove = 2,
+    Call = 3,
     ChannelNameChange = 4,
+    ChannelIconChange = 5,
     ChannelPinnedMessage = 6,
     UserJoin = 7,
+    ThreadCreated = 18,
     Reply = 19,
+    ThreadStarterMessage = 21,
+    ClientSystem = 99,
     Unknown = 255,
 }
 impl Serialize for MessageType {
@@ -31,6 +36,11 @@ impl<'de> Deserialize<'de> for MessageType {
             0 => Self::Default,
             1 => Self::RecipientAdd,
             2 => Self::RecipientRemove,
+            3 => Self::Call,
+            5 => Self::ChannelIconChange,
+            18 => Self::ThreadCreated,
+            21 => Self::ThreadStarterMessage,
+            99 => Self::ClientSystem,
             4 => Self::ChannelNameChange,
             6 => Self::ChannelPinnedMessage,
             7 => Self::UserJoin,
@@ -82,7 +92,7 @@ pub struct ReactionEmoji {
 }
 
 impl ReactionEmoji {
-    /// Formato para rota de reaction: `nome:id` em custom, `nome` em unicode.
+    /// Reaction route form: `name:id` for custom emojis, `name` for unicode.
     pub fn escaped(&self) -> String {
         match self.id {
             Some(id) => format!("{}:{}", self.name, id),
@@ -90,7 +100,7 @@ impl ReactionEmoji {
         }
     }
 
-    /// `escaped()` pronto para URL (percent-encoding dos bytes não-safe).
+    /// `escaped()` ready for a URL (percent-encodes unsafe bytes).
     pub fn encoded(&self) -> String {
         const SAFE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~";
         let mut out = String::new();
@@ -127,7 +137,7 @@ pub struct MessageAttachment {
     pub content_type: Option<String>,
 }
 
-/// Mensagem completa (subset; campos desconhecidos são ignorados).
+/// Full message (subset; unknown fields are ignored).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub id: Snowflake,
@@ -169,8 +179,8 @@ impl Message {
     }
 }
 
-/// Payload de envio (`POST /channels/{id}/messages`).
-/// Só flags enviáveis: SUPPRESS_EMBEDS=4, SUPPRESS_NOTIFICATIONS=4096.
+/// Send payload (`POST /channels/{id}/messages`).
+/// Sendable flags only: SUPPRESS_EMBEDS=4, SUPPRESS_NOTIFICATIONS=4096.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageSend {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,7 +207,7 @@ impl MessageSend {
         }
     }
 
-    /// Texto sem mencionar ninguém (só a mensagem, sem referência de reply).
+    /// Text that mentions nobody (message only, no reply reference).
     pub fn no_ping_text(content: impl Into<String>) -> Self {
         Self {
             content: Some(content.into()),
@@ -210,7 +220,7 @@ impl MessageSend {
         let empty_content = self.content.as_ref().map(|s| s.is_empty()).unwrap_or(true);
         if empty_content && self.embeds.is_empty() {
             return Err(crate::error::CoreError::InvalidMessage(
-                "content vazio sem embeds".into(),
+                "empty content and no embeds".into(),
             ));
         }
         for e in &self.embeds {

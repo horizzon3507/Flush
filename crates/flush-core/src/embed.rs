@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
 
-/// Embed de envio (subset `rich`): title/description/color/author/footer/image/thumbnail/fields.
-/// Limites espelham o `EmbedBuilder` do `@fluxerjs/builders`.
+/// Outgoing embed (`rich` subset): title/description/color/author/footer/image/thumbnail/fields.
+/// Limits mirror `EmbedBuilder` in `@fluxerjs/builders`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Embed {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -157,7 +157,7 @@ impl EmbedBuilder {
         Ok(self.inner)
     }
 
-    /// Versão tolerante: trunca em vez de errar (contagem por chars).
+    /// Lenient variant: truncates instead of failing (counted in chars).
     pub fn build_lossy(mut self) -> Embed {
         truncate_opt(&mut self.inner.title, TITLE_MAX);
         truncate_opt(&mut self.inner.description, DESCRIPTION_MAX);
@@ -168,7 +168,7 @@ impl EmbedBuilder {
             truncate_str(&mut f.name, FIELD_NAME_MAX);
             truncate_str(&mut f.value, FIELD_VALUE_MAX);
         }
-        // Enforça teto total cortando a descrição.
+        // Enforce the total cap by trimming the description.
         while char_count(&self.inner) > TOTAL_MAX {
             let Some(desc) = self.inner.description.as_mut() else {
                 break;
@@ -176,7 +176,7 @@ impl EmbedBuilder {
             if desc.is_empty() {
                 break;
             }
-            // Corta ~10% por iteração (em boundary de char).
+            // Trim ~10% per iteration (on a char boundary).
             let cut = (desc.chars().count() / 10).max(1);
             let keep: String = desc.chars().take(desc.chars().count() - cut).collect();
             *desc = keep;
@@ -258,7 +258,7 @@ fn now_rfc3339() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // ISO-8601 UTC sem dependência de chrono (algoritmo de Howard Hinnant).
+    // ISO 8601 UTC without chrono (Howard Hinnant's algorithm).
     let days = (secs / 86_400) as i64;
     let secs_of_day = (secs % 86_400) as u32;
     let (y, m, d) = civil_from_days(days + 719_468);

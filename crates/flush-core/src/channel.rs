@@ -2,6 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::permissions::wire as perm_wire;
 use crate::snowflake::Snowflake;
+use crate::thread::{DefaultReactionEmoji, ForumTag, ThreadMember, ThreadMetadata};
 use crate::user::PartialUser;
 use crate::wire::{null_bool, null_vec};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -12,6 +13,12 @@ pub enum ChannelType {
     GuildVoice = 2,
     GroupDm = 3,
     GuildCategory = 4,
+    GuildAnnouncement = 5,
+    AnnouncementThread = 10,
+    PublicThread = 11,
+    PrivateThread = 12,
+    GuildForum = 15,
+    GuildMedia = 16,
     GuildLink = 998,
     DmPersonalNotes = 999,
     #[default]
@@ -33,6 +40,12 @@ impl<'de> Deserialize<'de> for ChannelType {
             2 => Self::GuildVoice,
             3 => Self::GroupDm,
             4 => Self::GuildCategory,
+            5 => Self::GuildAnnouncement,
+            10 => Self::AnnouncementThread,
+            11 => Self::PublicThread,
+            12 => Self::PrivateThread,
+            15 => Self::GuildForum,
+            16 => Self::GuildMedia,
             998 => Self::GuildLink,
             999 => Self::DmPersonalNotes,
             _ => Self::Unknown,
@@ -99,14 +112,71 @@ pub struct Channel {
     pub nsfw: bool,
     #[serde(default)]
     pub rate_limit_per_user: Option<u64>,
+    #[serde(default)]
+    pub owner_id: Option<Snowflake>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub bitrate: Option<u64>,
+    #[serde(default)]
+    pub user_limit: Option<u64>,
+    #[serde(default)]
+    pub rtc_region: Option<String>,
+    #[serde(default)]
+    pub last_pin_timestamp: Option<String>,
+    #[serde(default)]
+    pub flags: Option<u64>,
+    #[serde(default)]
+    pub thread_metadata: Option<ThreadMetadata>,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub applied_tags: Vec<Snowflake>,
+    #[serde(default)]
+    pub message_count: Option<u64>,
+    #[serde(default)]
+    pub member_count: Option<u64>,
+    #[serde(default)]
+    pub member: Option<ThreadMember>,
+    #[serde(default)]
+    pub default_auto_archive_duration: Option<u64>,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub available_tags: Vec<ForumTag>,
+    #[serde(default)]
+    pub default_reaction_emoji: Option<DefaultReactionEmoji>,
 }
 
 impl Channel {
     pub fn is_text_bearing(&self) -> bool {
         !matches!(
             self.kind,
-            ChannelType::GuildCategory | ChannelType::GuildLink
+            ChannelType::GuildCategory
+                | ChannelType::GuildLink
+                | ChannelType::GuildForum
+                | ChannelType::GuildMedia
         )
+    }
+
+    pub fn is_thread(&self) -> bool {
+        matches!(
+            self.kind,
+            ChannelType::AnnouncementThread
+                | ChannelType::PublicThread
+                | ChannelType::PrivateThread
+        )
+    }
+
+    /// Forum and media channels hold posts (threads), not messages.
+    pub fn is_forum_like(&self) -> bool {
+        matches!(self.kind, ChannelType::GuildForum | ChannelType::GuildMedia)
+    }
+
+    pub fn is_voice(&self) -> bool {
+        self.kind == ChannelType::GuildVoice
+    }
+
+    pub fn mention(&self) -> String {
+        format!("<#{}>", self.id)
     }
 
     pub fn is_dm(&self) -> bool {

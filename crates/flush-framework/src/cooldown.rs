@@ -1,7 +1,7 @@
-//! Cooldowns por (usuário, comando) — espelho de `Jully Bot.js`.
+//! Cooldowns per (user, command), mirroring `Jully Bot.js`.
 //!
 //! Jully: `setCooldown(user, cmd, ms)` + `isOnCooldown`/`getCooldownRemaining`
-//! com resposta "Aguarde Ns". Relógio em ms injetável para teste.
+//! with a "wait Ns" reply. The ms clock is injectable for tests.
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,7 +47,7 @@ impl Cooldowns {
             .insert((user.to_owned(), command.to_owned()), until);
     }
 
-    /// Segundos restantes (arredondado p/ cima) ou `None` se livre.
+    /// Seconds left (rounded up), or `None` when free.
     pub fn remaining(&self, user: &str, command: &str) -> Option<u64> {
         let until = *self.inner.get(&(user.to_owned(), command.to_owned()))?;
         let now = (self.now_ms)();
@@ -61,7 +61,7 @@ impl Cooldowns {
         self.remaining(user, command).is_some()
     }
 
-    /// Limpa entradas expiradas (chamar periodicamente, ex.: a cada dispatch).
+    /// Drops expired entries (call periodically, e.g. on every dispatch).
     pub fn sweep(&mut self) {
         let now = (self.now_ms)();
         self.inner.retain(|_, until| *until > now);

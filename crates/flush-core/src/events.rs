@@ -1,12 +1,17 @@
 use serde::{Deserialize, Serialize};
 
+use crate::audit_log::AuditLogEntry;
 use crate::channel::Channel;
+use crate::emoji::{Emoji, Sticker};
 use crate::guild::{Guild, Role};
+use crate::invite::Invite;
 use crate::message::{Message, ReactionEmoji};
 use crate::snowflake::Snowflake;
+use crate::thread::ThreadMember;
 use crate::user::{PartialUser, User};
+use crate::voice::{VoiceServerUpdate, VoiceState};
 
-/// Envelope de Dispatch (op 0): `{ op: 0, t, s, d }`.
+/// Dispatch envelope (op 0): `{ op: 0, t, s, d }`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DispatchEnvelope {
     #[serde(rename = "t")]
@@ -17,7 +22,7 @@ pub struct DispatchEnvelope {
     pub data: serde_json::Value,
 }
 
-/// Payload mínimo do READY (subset de bot: session_id + user + guilds indisponíveis).
+/// Minimal READY payload (bot subset: session_id + user + unavailable guilds).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadyPayload {
     pub session_id: String,
@@ -29,7 +34,7 @@ pub struct ReadyPayload {
     pub users: Vec<PartialUser>,
 }
 
-/// Guild no READY de bot: `{ id, unavailable: true }` + burst de GUILD_CREATE depois.
+/// Guild in a bot READY: `{ id, unavailable: true }`, followed by a GUILD_CREATE burst.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuildReady {
     pub id: Snowflake,
@@ -37,8 +42,9 @@ pub struct GuildReady {
     pub unavailable: bool,
 }
 
-/// Eventos tipados que o Flush decodifica (subset de paridade inicial).
+/// Typed events Flush decodes. See [`DISPATCH_EVENTS`] for every wire name.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     Ready(ReadyPayload),
     Resumed {
@@ -119,7 +125,98 @@ pub enum Event {
         user_id: Snowflake,
     },
     PresenceUpdate(PresencePayload),
-    /// Evento ainda sem tipo dedicado: nome + payload bruto.
+    UserUpdate(User),
+    GuildMembersChunk {
+        guild_id: Snowflake,
+        members: Vec<crate::guild::MemberUser>,
+        chunk_index: u32,
+        chunk_count: u32,
+        not_found: Vec<Snowflake>,
+    },
+    GuildRoleUpdateBulk {
+        guild_id: Snowflake,
+        roles: Vec<Role>,
+    },
+    GuildEmojisUpdate {
+        guild_id: Snowflake,
+        emojis: Vec<Emoji>,
+    },
+    GuildStickersUpdate {
+        guild_id: Snowflake,
+        stickers: Vec<Sticker>,
+    },
+    GuildAuditLogEntryCreate {
+        guild_id: Option<Snowflake>,
+        entry: AuditLogEntry,
+    },
+    ChannelUpdateBulk {
+        channels: Vec<Channel>,
+    },
+    ChannelPinsUpdate {
+        channel_id: Snowflake,
+        guild_id: Option<Snowflake>,
+        last_pin_timestamp: Option<String>,
+    },
+    ChannelRecipientAdd {
+        channel_id: Snowflake,
+        user: PartialUser,
+    },
+    ChannelRecipientRemove {
+        channel_id: Snowflake,
+        user: PartialUser,
+    },
+    ThreadCreate(Channel),
+    ThreadUpdate(Channel),
+    ThreadDelete {
+        id: Snowflake,
+        guild_id: Option<Snowflake>,
+        parent_id: Option<Snowflake>,
+    },
+    ThreadListSync {
+        guild_id: Snowflake,
+        channel_ids: Vec<Snowflake>,
+        threads: Vec<Channel>,
+        members: Vec<ThreadMember>,
+    },
+    ThreadMemberUpdate {
+        guild_id: Option<Snowflake>,
+        member: ThreadMember,
+    },
+    ThreadMembersUpdate {
+        id: Snowflake,
+        guild_id: Option<Snowflake>,
+        member_count: u64,
+        added_members: Vec<ThreadMember>,
+        removed_member_ids: Vec<Snowflake>,
+    },
+    InviteCreate {
+        guild_id: Option<Snowflake>,
+        channel_id: Option<Snowflake>,
+        invite: Invite,
+    },
+    InviteDelete {
+        code: String,
+        channel_id: Option<Snowflake>,
+        guild_id: Option<Snowflake>,
+    },
+    MessageReactionRemoveAll {
+        channel_id: Snowflake,
+        message_id: Snowflake,
+        guild_id: Option<Snowflake>,
+    },
+    MessageReactionRemoveEmoji {
+        channel_id: Snowflake,
+        message_id: Snowflake,
+        guild_id: Option<Snowflake>,
+        emoji: ReactionEmoji,
+    },
+    WebhooksUpdate {
+        guild_id: Option<Snowflake>,
+        channel_id: Option<Snowflake>,
+    },
+    VoiceStateUpdate(VoiceState),
+    VoiceServerUpdate(VoiceServerUpdate),
+    /// Event without a dedicated type yet: name + raw payload.
     Unknown {
         kind: String,
         seq: u64,
@@ -164,11 +261,34 @@ impl Event {
             Self::MessageReactionRemove { .. } => "MESSAGE_REACTION_REMOVE",
             Self::TypingStart { .. } => "TYPING_START",
             Self::PresenceUpdate(_) => "PRESENCE_UPDATE",
+            Self::UserUpdate(_) => "USER_UPDATE",
+            Self::GuildMembersChunk { .. } => "GUILD_MEMBERS_CHUNK",
+            Self::GuildRoleUpdateBulk { .. } => "GUILD_ROLE_UPDATE_BULK",
+            Self::GuildEmojisUpdate { .. } => "GUILD_EMOJIS_UPDATE",
+            Self::GuildStickersUpdate { .. } => "GUILD_STICKERS_UPDATE",
+            Self::GuildAuditLogEntryCreate { .. } => "GUILD_AUDIT_LOG_ENTRY_CREATE",
+            Self::ChannelUpdateBulk { .. } => "CHANNEL_UPDATE_BULK",
+            Self::ChannelPinsUpdate { .. } => "CHANNEL_PINS_UPDATE",
+            Self::ChannelRecipientAdd { .. } => "CHANNEL_RECIPIENT_ADD",
+            Self::ChannelRecipientRemove { .. } => "CHANNEL_RECIPIENT_REMOVE",
+            Self::ThreadCreate(_) => "THREAD_CREATE",
+            Self::ThreadUpdate(_) => "THREAD_UPDATE",
+            Self::ThreadDelete { .. } => "THREAD_DELETE",
+            Self::ThreadListSync { .. } => "THREAD_LIST_SYNC",
+            Self::ThreadMemberUpdate { .. } => "THREAD_MEMBER_UPDATE",
+            Self::ThreadMembersUpdate { .. } => "THREAD_MEMBERS_UPDATE",
+            Self::InviteCreate { .. } => "INVITE_CREATE",
+            Self::InviteDelete { .. } => "INVITE_DELETE",
+            Self::MessageReactionRemoveAll { .. } => "MESSAGE_REACTION_REMOVE_ALL",
+            Self::MessageReactionRemoveEmoji { .. } => "MESSAGE_REACTION_REMOVE_EMOJI",
+            Self::WebhooksUpdate { .. } => "WEBHOOKS_UPDATE",
+            Self::VoiceStateUpdate(_) => "VOICE_STATE_UPDATE",
+            Self::VoiceServerUpdate(_) => "VOICE_SERVER_UPDATE",
             Self::Unknown { .. } => "UNKNOWN",
         }
     }
 
-    /// Decodifica um envelope já parseado para o tipo dedicado (ou Unknown).
+    /// Decodes a parsed envelope into its dedicated type (or `Unknown`).
     pub fn decode(env: &DispatchEnvelope) -> Self {
         fn de<T: for<'de> Deserialize<'de>>(v: &serde_json::Value) -> Option<T> {
             serde_json::from_value(v.clone()).ok()
@@ -406,9 +526,224 @@ impl Event {
             "PRESENCE_UPDATE" => de(&env.data)
                 .map(Event::PresenceUpdate)
                 .unwrap_or(unknown(env)),
-            _ => unknown(env),
+            _ => decode_extended(env).unwrap_or_else(|| unknown(env)),
         }
     }
+
+    /// Wire name for [`Event::Unknown`], otherwise the same as [`Event::kind`].
+    pub fn wire_name(&self) -> &str {
+        match self {
+            Self::Unknown { kind, .. } => kind,
+            other => other.kind(),
+        }
+    }
+}
+
+/// Every dispatch name in `GatewayDispatchEvents` of `@fluxerjs/types` 3.3.0.
+/// Names without a typed variant arrive as [`Event::Unknown`] with the raw payload.
+pub const DISPATCH_EVENTS: &[&str] = &[
+    "READY",
+    "RESUMED",
+    "SESSIONS_REPLACE",
+    "USER_UPDATE",
+    "USER_SETTINGS_UPDATE",
+    "USER_GUILD_SETTINGS_UPDATE",
+    "USER_CONNECTIONS_UPDATE",
+    "WEBAUTHN_CREDENTIALS_UPDATE",
+    "USER_PINNED_DMS_UPDATE",
+    "USER_NOTE_UPDATE",
+    "RECENT_MENTION_DELETE",
+    "SAVED_MESSAGE_CREATE",
+    "SAVED_MESSAGE_DELETE",
+    "AUTH_SESSION_CHANGE",
+    "PRESENCE_UPDATE",
+    "PRESENCE_UPDATE_BULK",
+    "GUILD_CREATE",
+    "GUILD_UPDATE",
+    "GUILD_DELETE",
+    "GUILD_MEMBER_ADD",
+    "GUILD_MEMBER_UPDATE",
+    "GUILD_MEMBER_REMOVE",
+    "GUILD_MEMBERS_CHUNK",
+    "GUILD_MEMBER_LIST_UPDATE",
+    "GUILD_SYNC",
+    "GUILD_COUNTS_UPDATE",
+    "CHANNEL_MEMBER_COUNTS_UPDATE",
+    "GUILD_ROLE_CREATE",
+    "GUILD_ROLE_UPDATE",
+    "GUILD_ROLE_UPDATE_BULK",
+    "GUILD_ROLE_DELETE",
+    "GUILD_EMOJIS_UPDATE",
+    "GUILD_STICKERS_UPDATE",
+    "GUILD_BAN_ADD",
+    "GUILD_BAN_REMOVE",
+    "GUILD_AUDIT_LOG_ENTRY_CREATE",
+    "CHANNEL_CREATE",
+    "CHANNEL_UPDATE",
+    "CHANNEL_UPDATE_BULK",
+    "CHANNEL_DELETE",
+    "CHANNEL_RECIPIENT_ADD",
+    "CHANNEL_RECIPIENT_REMOVE",
+    "CHANNEL_PINS_UPDATE",
+    "CHANNEL_PINS_ACK",
+    "THREAD_CREATE",
+    "THREAD_UPDATE",
+    "THREAD_DELETE",
+    "THREAD_LIST_SYNC",
+    "THREAD_MEMBER_UPDATE",
+    "THREAD_MEMBERS_UPDATE",
+    "THREAD_MEMBER_LIST_UPDATE",
+    "FORUM_UNREADS",
+    "PASSIVE_UPDATES",
+    "INVITE_CREATE",
+    "INVITE_DELETE",
+    "MESSAGE_CREATE",
+    "MESSAGE_UPDATE",
+    "MESSAGE_DELETE",
+    "MESSAGE_DELETE_BULK",
+    "MESSAGE_REACTION_ADD",
+    "MESSAGE_REACTION_ADD_MANY",
+    "MESSAGE_REACTION_REMOVE",
+    "MESSAGE_REACTION_REMOVE_ALL",
+    "MESSAGE_REACTION_REMOVE_EMOJI",
+    "MESSAGE_ACK",
+    "TYPING_START",
+    "WEBHOOKS_UPDATE",
+    "RELATIONSHIP_ADD",
+    "RELATIONSHIP_UPDATE",
+    "RELATIONSHIP_REMOVE",
+    "VOICE_STATE_UPDATE",
+    "VOICE_STATE_ACK",
+    "VOICE_SERVER_UPDATE",
+    "ENTRANCE_SOUND_PLAY",
+    "CALL_CREATE",
+    "CALL_UPDATE",
+    "CALL_DELETE",
+    "FAVORITE_MEME_CREATE",
+    "FAVORITE_MEME_UPDATE",
+    "FAVORITE_MEME_DELETE",
+];
+
+/// Whether `name` is a dispatch event the SDK knows about.
+pub fn is_known_dispatch(name: &str) -> bool {
+    DISPATCH_EVENTS.contains(&name)
+}
+
+fn field<T: for<'de> Deserialize<'de>>(data: &serde_json::Value, key: &str) -> Option<T> {
+    data.get(key)
+        .filter(|v| !v.is_null())
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+/// Missing or `null` is an empty list; a malformed entry is `None`, so the
+/// event falls back to `Unknown` and keeps its raw payload.
+fn list<T: for<'de> Deserialize<'de>>(data: &serde_json::Value, key: &str) -> Option<Vec<T>> {
+    match data.get(key) {
+        None | Some(serde_json::Value::Null) => Some(Vec::new()),
+        Some(v) => serde_json::from_value(v.clone()).ok(),
+    }
+}
+
+fn whole<T: for<'de> Deserialize<'de>>(data: &serde_json::Value) -> Option<T> {
+    serde_json::from_value(data.clone()).ok()
+}
+
+fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
+    let d = &env.data;
+    Some(match env.kind.as_str() {
+        "USER_UPDATE" => Event::UserUpdate(whole(d)?),
+        "GUILD_MEMBERS_CHUNK" => Event::GuildMembersChunk {
+            guild_id: field(d, "guild_id")?,
+            members: list(d, "members")?,
+            chunk_index: field(d, "chunk_index").unwrap_or(0),
+            chunk_count: field(d, "chunk_count").unwrap_or(1),
+            not_found: list(d, "not_found")?,
+        },
+        "GUILD_ROLE_UPDATE_BULK" => Event::GuildRoleUpdateBulk {
+            guild_id: field(d, "guild_id")?,
+            roles: list(d, "roles")?,
+        },
+        "GUILD_EMOJIS_UPDATE" => Event::GuildEmojisUpdate {
+            guild_id: field(d, "guild_id")?,
+            emojis: list(d, "emojis")?,
+        },
+        "GUILD_STICKERS_UPDATE" => Event::GuildStickersUpdate {
+            guild_id: field(d, "guild_id")?,
+            stickers: list(d, "stickers")?,
+        },
+        "GUILD_AUDIT_LOG_ENTRY_CREATE" => Event::GuildAuditLogEntryCreate {
+            guild_id: field(d, "guild_id"),
+            entry: whole(d)?,
+        },
+        "CHANNEL_UPDATE_BULK" => Event::ChannelUpdateBulk {
+            channels: list(d, "channels")?,
+        },
+        "CHANNEL_PINS_UPDATE" => Event::ChannelPinsUpdate {
+            channel_id: field(d, "channel_id")?,
+            guild_id: field(d, "guild_id"),
+            last_pin_timestamp: field(d, "last_pin_timestamp"),
+        },
+        "CHANNEL_RECIPIENT_ADD" => Event::ChannelRecipientAdd {
+            channel_id: field(d, "channel_id")?,
+            user: field(d, "user")?,
+        },
+        "CHANNEL_RECIPIENT_REMOVE" => Event::ChannelRecipientRemove {
+            channel_id: field(d, "channel_id")?,
+            user: field(d, "user")?,
+        },
+        "THREAD_CREATE" => Event::ThreadCreate(whole(d)?),
+        "THREAD_UPDATE" => Event::ThreadUpdate(whole(d)?),
+        "THREAD_DELETE" => Event::ThreadDelete {
+            id: field(d, "id")?,
+            guild_id: field(d, "guild_id"),
+            parent_id: field(d, "parent_id"),
+        },
+        "THREAD_LIST_SYNC" => Event::ThreadListSync {
+            guild_id: field(d, "guild_id")?,
+            channel_ids: list(d, "channel_ids")?,
+            threads: list(d, "threads")?,
+            members: list(d, "members")?,
+        },
+        "THREAD_MEMBER_UPDATE" => Event::ThreadMemberUpdate {
+            guild_id: field(d, "guild_id"),
+            member: whole(d)?,
+        },
+        "THREAD_MEMBERS_UPDATE" => Event::ThreadMembersUpdate {
+            id: field(d, "id")?,
+            guild_id: field(d, "guild_id"),
+            member_count: field(d, "member_count").unwrap_or(0),
+            added_members: list(d, "added_members")?,
+            removed_member_ids: list(d, "removed_member_ids")?,
+        },
+        "INVITE_CREATE" => Event::InviteCreate {
+            guild_id: field(d, "guild_id"),
+            channel_id: field(d, "channel_id"),
+            invite: whole(d)?,
+        },
+        "INVITE_DELETE" => Event::InviteDelete {
+            code: field(d, "code")?,
+            channel_id: field(d, "channel_id"),
+            guild_id: field(d, "guild_id"),
+        },
+        "MESSAGE_REACTION_REMOVE_ALL" => Event::MessageReactionRemoveAll {
+            channel_id: field(d, "channel_id")?,
+            message_id: field(d, "message_id")?,
+            guild_id: field(d, "guild_id"),
+        },
+        "MESSAGE_REACTION_REMOVE_EMOJI" => Event::MessageReactionRemoveEmoji {
+            channel_id: field(d, "channel_id")?,
+            message_id: field(d, "message_id")?,
+            guild_id: field(d, "guild_id"),
+            emoji: field(d, "emoji")?,
+        },
+        "WEBHOOKS_UPDATE" => Event::WebhooksUpdate {
+            guild_id: field(d, "guild_id"),
+            channel_id: field(d, "channel_id"),
+        },
+        "VOICE_STATE_UPDATE" => Event::VoiceStateUpdate(whole(d)?),
+        "VOICE_SERVER_UPDATE" => Event::VoiceServerUpdate(whole(d)?),
+        _ => return None,
+    })
 }
 
 fn unknown(env: &DispatchEnvelope) -> Event {

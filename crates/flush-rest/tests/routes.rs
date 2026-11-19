@@ -64,3 +64,52 @@ fn new_resource_routes() {
     assert_eq!(Routes::guild_role(sf(1), sf(5)), "/guilds/1/roles/5");
     assert_eq!(Routes::dm_channels(), "/users/@me/channels");
 }
+
+#[test]
+fn thread_and_tag_routes_match_sdk() {
+    assert_eq!(Routes::channel_threads(sf(1)), "/channels/1/threads");
+    assert_eq!(
+        Routes::channel_message_threads(sf(1), sf(2)),
+        "/channels/1/messages/2/threads"
+    );
+    assert_eq!(
+        Routes::channel_threads_archived_private(sf(1)),
+        "/channels/1/threads/archived/private"
+    );
+    assert_eq!(
+        Routes::channel_thread_member_me(sf(1)),
+        "/channels/1/thread-members/@me"
+    );
+    assert_eq!(Routes::channel_tag(sf(1), sf(2)), "/channels/1/tags/2");
+    assert_eq!(
+        Routes::guild_active_threads(sf(1)),
+        "/guilds/1/threads/active"
+    );
+}
+
+#[test]
+fn webhook_expression_and_misc_routes_match_sdk() {
+    assert_eq!(Routes::channel_webhooks(sf(1)), "/channels/1/webhooks");
+    assert_eq!(Routes::webhook_execute(sf(1), "a/b"), "/webhooks/1/a%2Fb");
+    assert_eq!(
+        Routes::webhook_message(sf(1), "tok", sf(3)),
+        "/webhooks/1/tok/messages/3"
+    );
+    assert_eq!(Routes::guild_emoji(sf(1), sf(2)), "/guilds/1/emojis/2");
+    assert_eq!(
+        Routes::guild_stickers_bulk(sf(1)),
+        "/guilds/1/stickers/bulk"
+    );
+    assert_eq!(Routes::guild_audit_logs(sf(1)), "/guilds/1/audit-logs");
+    assert_eq!(
+        Routes::channel_permission(sf(1), sf(2)),
+        "/channels/1/permissions/2"
+    );
+    assert_eq!(Routes::leave_guild(sf(1)), "/users/@me/guilds/1");
+    assert_eq!(
+        Routes::user_profile(sf(1), Some(sf(2))),
+        "/users/1/profile?guild_id=2"
+    );
+    assert_eq!(Routes::applications_me(), "/applications/@me");
+    assert_eq!(Routes::instance_discovery(), "/.well-known/fluxer");
+}
