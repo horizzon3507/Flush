@@ -83,6 +83,8 @@ pub enum HookEvent<'a> {
         user: &'a PartialUser,
     },
     Message(&'a Message),
+    /// Every gateway event, before the bot updates its cache.
+    Raw(&'a Event),
 }
 
 /// Hooks de eventos do cache do `Bot` (ready, guilds, membros, mensagens).
@@ -109,6 +111,9 @@ pub struct Bot {
     presence_idx: usize,
     hooks: Option<Arc<dyn Hooks>>,
     help: Option<Arc<crate::help::Help>>,
+    middleware: Vec<Arc<dyn crate::middleware::Middleware>>,
+    collectors: crate::collector::Collectors,
+    scheduler: crate::scheduler::Scheduler,
 }
 
 impl Bot {
@@ -136,7 +141,25 @@ impl Bot {
             presence_idx: 0,
             hooks: None,
             help: None,
+            middleware: Vec::new(),
+            collectors: crate::collector::Collectors::new(),
+            scheduler: crate::scheduler::Scheduler::new(),
         })
+    }
+
+    /// Adds a middleware; they run in insertion order before each command.
+    pub fn middleware(mut self, mw: impl crate::middleware::Middleware + 'static) -> Self {
+        self.middleware.push(Arc::new(mw));
+        self
+    }
+
+    /// Registry fed with this bot's messages and reactions.
+    pub fn collectors(&self) -> crate::collector::Collectors {
+        self.collectors.clone()
+    }
+
+    pub fn scheduler(&self) -> crate::scheduler::Scheduler {
+        self.scheduler.clone()
     }
 
     /// Registra hooks de eventos (ready/guild/membros/mensagens).
@@ -224,7 +247,40 @@ impl Bot {
     }
 
     async fn on_event(&mut self, ev: Event) {
+        if let Some(h) = &self.hooks {
+            h.dispatch(HookEvent::Raw(&ev)).await;
+        }
+        match &ev {
+            Event::MessageCreate(m) => self.collectors.offer_message(m),
+            Event::MessageReactionAdd {
+                channel_id,
+                message_id,
+                user_id,
+                emoji,
+                ..
+            } => self
+                .collectors
+                .offer_reaction(&crate::collector::CollectedReaction {
+                    channel_id: *channel_id,
+                    message_id: *message_id,
+                    user_id: *user_id,
+                    emoji: emoji.clone(),
+                }),
+            _ => {}
+        }
         match ev {
+            Event::ThreadCreate(c) | Event::ThreadUpdate(c) => {
+                self.shared.write().await.channels.insert(c.id, c);
+            }
+            Event::ThreadDelete { id, .. } => {
+                self.shared.write().await.channels.remove(&id);
+            }
+            Event::ChannelUpdateBulk { channels } => {
+                let mut s = self.shared.write().await;
+                for c in channels {
+                    s.channels.insert(c.id, c);
+                }
+            }
             Event::Ready(r) => {
                 info!(
                     "flush: ready session={} guilds={}",
@@ -442,6 +498,14 @@ impl Bot {
             member,
             bot_member,
         };
+        for mw in &self.middleware {
+            if let crate::middleware::Flow::Stop(reply) = mw.before(&cmd_name, &ctx).await {
+                if let Some(text) = reply {
+                    let _ = ctx.reply_no_ping(text).await;
+                }
+                return;
+            }
+        }
         // Gate de permissão do comando (dono do servidor e bot com permissão).
         if let Some(action) = cmd.required_permission() {
             let Some(guild_ref) = ctx.guild.as_ref() else {
