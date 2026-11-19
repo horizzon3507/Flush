@@ -100,7 +100,26 @@ pub struct GuildConfigPatch {
     pub bot_color: Option<Option<u32>>,
 }
 
-fn default_data_dir() -> PathBuf {
+impl GuildConfig {
+    /// Applies a patch with the store's normalization (trimmed prefix of at
+    /// most 3 characters, empty channel id clears the mod log).
+    pub fn apply(&mut self, patch: GuildConfigPatch) {
+        if let Some(p) = patch.prefix {
+            let p = p.trim().to_owned();
+            if !p.is_empty() {
+                self.prefix = p.chars().take(3).collect();
+            }
+        }
+        if let Some(id) = patch.mod_log_channel_id {
+            self.mod_log_channel_id = id.filter(|s| !s.is_empty());
+        }
+        if let Some(c) = patch.bot_color {
+            self.bot_color = c;
+        }
+    }
+}
+
+pub(crate) fn default_data_dir() -> PathBuf {
     std::env::var("FLUSH_DATA_DIR")
         .or_else(|_| std::env::var("SOUR_DATA_DIR"))
         .map(PathBuf::from)
@@ -138,18 +157,7 @@ impl GuildStore {
 
     pub fn update(&mut self, guild_id: &str, patch: GuildConfigPatch) -> GuildConfig {
         let mut cfg = self.get(guild_id);
-        if let Some(p) = patch.prefix {
-            let p = p.trim().to_owned();
-            if !p.is_empty() {
-                cfg.prefix = p.chars().take(3).collect();
-            }
-        }
-        if let Some(id) = patch.mod_log_channel_id {
-            cfg.mod_log_channel_id = id.filter(|s| !s.is_empty());
-        }
-        if let Some(c) = patch.bot_color {
-            cfg.bot_color = c;
-        }
+        cfg.apply(patch);
         let mut store = self.load().clone();
         store.insert(guild_id.to_owned(), cfg.clone());
         self.save(&store);
