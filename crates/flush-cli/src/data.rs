@@ -4,6 +4,7 @@
 use std::io::Write;
 use std::path::Path;
 
+use flush_framework::{GuildConfig, ModCase};
 use serde_json::{json, Map, Value};
 
 use crate::arguments::{DataOperation, RestorePolicy};
@@ -91,6 +92,33 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// Checks every entry the way the stores read them: one entry the bot cannot
+/// parse makes it discard the whole file on its next load.
+fn validate_entries(kind: &str, data: &Store) -> Result<(), CliError> {
+    for (guild, entry) in data {
+        let valid = if kind == "cases" {
+            entry.get("next_id").is_some_and(Value::is_u64)
+                && entry
+                    .get("cases")
+                    .and_then(Value::as_array)
+                    .is_some_and(|cases| {
+                        cases
+                            .iter()
+                            .all(|case| serde_json::from_value::<ModCase>(case.clone()).is_ok())
+                    })
+        } else {
+            serde_json::from_value::<GuildConfig>(entry.clone()).is_ok()
+        };
+        if !valid {
+            return Err(CliError::new(
+                "BACKUP_INVALID",
+                format!("The backup entry for guild {guild} is not a valid {kind} record."),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn read_backup(path: &Path) -> Result<(String, Store), CliError> {
     let invalid = |message: &str| CliError::new("BACKUP_INVALID", message);
     let info = std::fs::metadata(path)
@@ -109,6 +137,7 @@ fn read_backup(path: &Path) -> Result<(String, Store), CliError> {
         value.get("data"),
     ) {
         (Some(1), Some(kind @ ("guilds" | "cases")), Some(Value::Object(data))) => {
+            validate_entries(kind, data)?;
             Ok((kind.to_owned(), data.clone()))
         }
         _ => Err(invalid(
@@ -213,14 +242,26 @@ mod tests {
         dir
     }
 
-    const CASES: &str =
-        r#"{"1":{"next_id":3,"cases":[{"id":1},{"id":2}]},"2":{"next_id":2,"cases":[{"id":1}]}}"#;
+    fn case(id: u64) -> String {
+        format!(
+            r#"{{"id":{id},"type":"ban","target_id":"7","moderator_id":"8","reason":"spam","timestamp":1}}"#
+        )
+    }
+
+    fn cases() -> String {
+        format!(
+            r#"{{"1":{{"next_id":3,"cases":[{},{}]}},"2":{{"next_id":2,"cases":[{}]}}}}"#,
+            case(1),
+            case(2),
+            case(1)
+        )
+    }
 
     #[test]
     fn stats_detect_the_store_kind() {
         let dir = temp("stats");
         let cases = dir.join("cases.json");
-        std::fs::write(&cases, CASES).unwrap();
+        std::fs::write(&cases, self::cases()).unwrap();
         let report = data_command(
             DataOperation::Stats,
             &cases,
@@ -253,7 +294,7 @@ mod tests {
         let dir = temp("roundtrip");
         let store = dir.join("cases.json");
         let backup = dir.join("backup.json");
-        std::fs::write(&store, CASES).unwrap();
+        std::fs::write(&store, cases()).unwrap();
         data_command(
             DataOperation::Backup,
             &store,
@@ -296,7 +337,7 @@ mod tests {
         assert_eq!(applied["guilds_after"], 2);
         let restored: Value =
             serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
-        assert_eq!(restored, serde_json::from_str::<Value>(CASES).unwrap());
+        assert_eq!(restored, serde_json::from_str::<Value>(&cases()).unwrap());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -305,7 +346,7 @@ mod tests {
         let dir = temp("recover");
         let store = dir.join("cases.json");
         let backup = dir.join("backup.json");
-        std::fs::write(&store, CASES).unwrap();
+        std::fs::write(&store, cases()).unwrap();
         data_command(
             DataOperation::Backup,
             &store,
@@ -327,7 +368,7 @@ mod tests {
         assert_eq!(restore(RestorePolicy::Replace).unwrap()["guilds_after"], 2);
         let restored: Value =
             serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
-        assert_eq!(restored, serde_json::from_str::<Value>(CASES).unwrap());
+        assert_eq!(restored, serde_json::from_str::<Value>(&cases()).unwrap());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -350,12 +391,21 @@ mod tests {
         let store = dir.join("cases.json");
         std::fs::write(&store, "[]").unwrap();
         assert_eq!(run(&store, None), "STORE_CORRUPT");
-        std::fs::write(&store, CASES).unwrap();
+        std::fs::write(&store, cases()).unwrap();
         let backup = dir.join("backup.json");
         std::fs::write(&backup, r#"{"version":2,"kind":"cases","data":{}}"#).unwrap();
         assert_eq!(run(&store, Some(&backup)), "BACKUP_INVALID");
-        std::fs::write(&backup, r#"{"version":1,"kind":"guilds","data":{}}"#).unwrap();
+        std::fs::write(
+            &backup,
+            r#"{"version":1,"kind":"guilds","data":{"1":{"prefix":"?"}}}"#,
+        )
+        .unwrap();
         assert_eq!(run(&store, Some(&backup)), "BACKUP_INVALID");
+        let broken =
+            r#"{"version":1,"kind":"cases","data":{"1":{"next_id":2,"cases":[{"id":"one"}]}}}"#;
+        std::fs::write(&backup, broken).unwrap();
+        assert_eq!(run(&store, Some(&backup)), "BACKUP_INVALID");
+        assert_eq!(std::fs::read_to_string(&store).unwrap(), cases());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
