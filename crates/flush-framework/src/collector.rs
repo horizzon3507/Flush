@@ -40,6 +40,7 @@ impl<T: Clone> Registry<T> {
     fn subscribe(&self, filter: Filter<T>) -> Receiver<T> {
         let (tx, rx) = unbounded();
         let mut waiters = self.waiters.lock().unwrap_or_else(|e| e.into_inner());
+        waiters.retain(|w| !w.tx.is_closed());
         waiters.push(Waiter { filter, tx });
         rx
     }
@@ -192,6 +193,32 @@ mod tests {
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].user_id, Snowflake(2));
         assert!(on_five.next(Duration::from_millis(5)).await.is_none());
+    }
+
+    #[async_std::test]
+    async fn filter_may_use_the_registry() {
+        let collectors = Collectors::new();
+        let inner = collectors.clone();
+        let c = collectors.reactions(move |_| {
+            let _ = inner.active();
+            true
+        });
+        collectors.offer_reaction(&reaction(5, 1));
+        assert!(c.next(Duration::from_millis(20)).await.is_some());
+    }
+
+    #[async_std::test]
+    async fn subscribing_prunes_dropped_collectors() {
+        let collectors = Collectors::new();
+        drop(collectors.reactions_on(Snowflake(5)));
+        let _live = collectors.reactions_on(Snowflake(6));
+        let registered = collectors
+            .reactions
+            .waiters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
+        assert_eq!(registered, 1);
     }
 
     #[async_std::test]
