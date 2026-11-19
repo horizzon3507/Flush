@@ -14,6 +14,7 @@ pub use flush_framework as framework;
 pub use flush_gateway as gateway;
 pub use flush_rest as rest;
 
+pub use flush_framework::{bot_from_project, ConfigError, ProjectConfig};
 pub use flush_framework::{
     with_mod_action, CaseStore, CaseType, ModAction, ModCase, PermissionAction,
 };

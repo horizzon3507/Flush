@@ -71,13 +71,22 @@ Deferred; mostly user-account events a bot token does not receive:
 | Middleware | `Middleware`, `Guard`, `guild_only` |
 | Collectors | `Collectors` (messages and reactions) |
 | Scheduler | `Scheduler` (`after`, `every`, cancellation) |
+| CLI: `init`, `templates`, `check`, `doctor`, `data`, `run`, `dev` | `flush` binary (`flush-cli`), see [CLI.md](CLI.md) |
+| Config and `.env` loading | `ProjectConfig` (`flush.toml`), `bot_from_project`, `load_env` |
 
 ### Deferred
 
 Each of these is a follow-up of its own:
 
 1. **Function-mode scripting language** and its ~459 built-in functions.
-2. **CLI** (project scaffolding, config loading, run/reload lifecycle).
+2. **CLI leftovers**. The `flush` CLI covers scaffolding, config loading and
+   the run/reload lifecycle ([CLI.md](CLI.md)). What is still missing waits
+   on other items of this list: `functions`, `lint`, `test`, `editor` and
+   `init --functions` (item 1); `data cleanup`, SQLite stores and the
+   `community`, `economy`, `utility` and `multifunctional` templates (item 3);
+   `run --shards` (item 4); plus the health server behind `--health-port`.
+   `check` reports the config only: the command catalog lives inside the
+   compiled bot.
 3. **SQLite store** (Flush persists `GuildStore`/`CaseStore` as JSON only),
    plus Yuzuha's variable service on top of it.
 4. **Sharding and cluster runtime** (Flush opens a single gateway connection).

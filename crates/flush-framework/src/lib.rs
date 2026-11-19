@@ -6,6 +6,7 @@
 //!   cooldown per (user, command), replies with the prefix when mentioned.
 //! - `CommandCtx` carries `rest` + read snapshots (guilds/channels/members
 //!   from events) so handlers can call `rest.reply(...)` etc.
+//! - [`ProjectConfig`]: `flush.toml` + `.env` loading shared with the `flush` CLI.
 //! - Typed arguments ([`Args`]), [`Middleware`], [`Collectors`] and a [`Scheduler`].
 pub mod args;
 pub mod cases;
@@ -17,6 +18,7 @@ pub mod help;
 pub mod middleware;
 pub mod moderation;
 pub mod parse;
+pub mod project;
 pub mod router;
 pub mod scheduler;
 
@@ -31,5 +33,9 @@ pub use help::{CommandInfo, Help, HelpCmd};
 pub use middleware::{guild_only, Flow, Guard, Middleware};
 pub use moderation::{with_mod_action, ModAction, Moderation, PermissionAction};
 pub use parse::{find_command, parse_mention_or_id, parse_prefix_body, ParsedCommand};
+pub use project::{
+    bot_from_project, find_config, load_env, parse_env, read_env_file, ConfigError, ProjectConfig,
+    CONFIG_FILE,
+};
 pub use router::{Bot, BotConfig, HookEvent, Hooks, NoHooks};
 pub use scheduler::{JobHandle, Scheduler};

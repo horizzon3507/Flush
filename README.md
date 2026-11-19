@@ -18,6 +18,7 @@ What matches the two references, and what is still deferred, is tracked in
 | `flush-rest` | REST `/v1` on surf: discovery `GET /.well-known/fluxer` → `api_public` (fallback `https://api.fluxer.app`), `Bot <token>` auth, 429 retry via `Retry-After` |
 | `flush-framework` | Router + features: per-guild prefix, aliases, dedup, cooldown, typed arguments, middleware, collectors, scheduler, rotating presence every 45s, per-command permission gate, generated help, event hooks, mod log, atomic JSON `GuildStore`/`CaseStore`, `with_mod_action` |
 | `flush-lib` | Facade: re-exports the crates + the `ping` example |
+| `flush-cli` | The `flush` command line: `init`, `templates`, `check`, `doctor`, `data`, `run`, `dev` ([docs/CLI.md](docs/CLI.md)) |
 
 ## REST (/v1)
 
@@ -62,6 +63,16 @@ raw payload, and `Event::wire_name()` tells them apart.
 - Sour-style reply writers: `plain_error`, `info_block`, `mod_success`.
 
 ## Quickstart
+
+```bash
+cargo install --path crates/flush-cli
+flush init my-bot --template moderation   # or: flush templates
+cd my-bot && cp .env.example .env         # fill in FLUXER_BOT_TOKEN
+flush check --build && flush dev
+```
+
+`flush.toml` holds the bot's settings and `flush::bot_from_project` loads it
+together with `.env`; see [docs/CLI.md](docs/CLI.md). Or run the bundled example:
 
 ```bash
 FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping
@@ -110,7 +121,8 @@ Env: `FLUXER_BOT_TOKEN` (required), `PREFIX` (default `!`),
 ## Tests
 
 ```bash
-cargo test --workspace   # 53 tests: tolerant wire, routes, protocol, framework
+cargo test --workspace   # 80 tests: tolerant wire, routes, protocol, framework, CLI
+cargo test -p flush-cli --test cli -- --ignored   # builds, lints and tests every scaffold
 cargo clippy --workspace --all-targets  # zero warnings
 ```
 
