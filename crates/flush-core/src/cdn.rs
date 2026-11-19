@@ -124,53 +124,6 @@ pub fn display_avatar_url(user_id: Snowflake, hash: Option<&str>, size: Option<u
         .unwrap_or_else(|| default_avatar_url(user_id))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn id(raw: &str) -> Snowflake {
-        raw.parse().unwrap()
-    }
-
-    #[test]
-    fn custom_avatar_matches_sdk() {
-        assert_eq!(
-            display_avatar_url(id("123"), Some("abc"), Some(512)),
-            "https://fluxerusercontent.com/avatars/123/abc.png?size=512"
-        );
-    }
-
-    #[test]
-    fn animated_hash_serves_gif() {
-        let url = avatar_url(id("123"), "a_xyz", None).unwrap();
-        assert!(url.ends_with("/a_xyz.gif"), "{url}");
-    }
-
-    #[test]
-    fn default_avatar_matches_sdk() {
-        assert_eq!(
-            display_avatar_url(id("123"), None, None),
-            "https://fluxerstatic.com/avatars/3.png"
-        );
-    }
-
-    #[test]
-    fn size_snaps_to_ladder() {
-        let url = avatar_url(id("123"), "abc", Some(500)).unwrap();
-        assert!(url.ends_with("?size=512"), "{url}");
-        let url = avatar_url(id("123"), "abc", Some(100)).unwrap();
-        assert!(url.ends_with("?size=128"), "{url}");
-    }
-
-    #[test]
-    fn empty_hash_falls_back() {
-        assert_eq!(
-            display_avatar_url(id("123"), Some(""), None),
-            "https://fluxerstatic.com/avatars/3.png"
-        );
-    }
-}
-
 /// `cdnBannerURL`: user or guild banner; `None` for an empty hash.
 pub fn banner_url(resource_id: Snowflake, hash: &str, size: Option<u32>) -> Option<String> {
     if hash.is_empty() {
@@ -254,4 +207,51 @@ pub fn sticker_url(sticker_id: Snowflake, animated: bool, size: Option<u32>) -> 
         "{CDN_URL}/stickers/{sticker_id}.{ext}{}",
         size_query(size, AssetClass::Sticker)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(raw: &str) -> Snowflake {
+        raw.parse().unwrap()
+    }
+
+    #[test]
+    fn custom_avatar_matches_sdk() {
+        assert_eq!(
+            display_avatar_url(id("123"), Some("abc"), Some(512)),
+            "https://fluxerusercontent.com/avatars/123/abc.png?size=512"
+        );
+    }
+
+    #[test]
+    fn animated_hash_serves_gif() {
+        let url = avatar_url(id("123"), "a_xyz", None).unwrap();
+        assert!(url.ends_with("/a_xyz.gif"), "{url}");
+    }
+
+    #[test]
+    fn default_avatar_matches_sdk() {
+        assert_eq!(
+            display_avatar_url(id("123"), None, None),
+            "https://fluxerstatic.com/avatars/3.png"
+        );
+    }
+
+    #[test]
+    fn size_snaps_to_ladder() {
+        let url = avatar_url(id("123"), "abc", Some(500)).unwrap();
+        assert!(url.ends_with("?size=512"), "{url}");
+        let url = avatar_url(id("123"), "abc", Some(100)).unwrap();
+        assert!(url.ends_with("?size=128"), "{url}");
+    }
+
+    #[test]
+    fn empty_hash_falls_back() {
+        assert_eq!(
+            display_avatar_url(id("123"), Some(""), None),
+            "https://fluxerstatic.com/avatars/3.png"
+        );
+    }
 }

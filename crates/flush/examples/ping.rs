@@ -174,7 +174,8 @@ impl Hooks for JoinLogger {
                 HookEvent::Ready { .. }
                 | HookEvent::GuildAdd(_)
                 | HookEvent::MemberLeave { .. }
-                | HookEvent::Message(_) => {}
+                | HookEvent::Message(_)
+                | HookEvent::Raw(_) => {}
             }
         })
     }

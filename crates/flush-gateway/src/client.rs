@@ -112,31 +112,6 @@ pub fn gateway_url_with_params(base: &str) -> String {
     url
 }
 
-#[cfg(test)]
-mod tests_url {
-    use super::*;
-
-    #[test]
-    fn adiciona_barra_e_params() {
-        assert_eq!(
-            gateway_url_with_params("wss://gateway.fluxer.app"),
-            "wss://gateway.fluxer.app/?v=1&encoding=json"
-        );
-        assert_eq!(
-            gateway_url_with_params("wss://gateway.fluxer.app/"),
-            "wss://gateway.fluxer.app/?v=1&encoding=json"
-        );
-        assert_eq!(
-            gateway_url_with_params("wss://gw.example.com/?v=1&encoding=json"),
-            "wss://gw.example.com/?v=1&encoding=json"
-        );
-        assert_eq!(
-            gateway_url_with_params("wss://gw.example.com/?v=1"),
-            "wss://gw.example.com/?v=1&encoding=json"
-        );
-    }
-}
-
 #[allow(deprecated)]
 type WsStream = async_tungstenite::WebSocketStream<ConnectStream>;
 
@@ -453,5 +428,30 @@ fn close_to_error(code: Option<u16>) -> ConnectError {
         Some(CloseCode::InvalidApiVersion) => ConnectError::BadVersion,
         Some(c) => ConnectError::Ws(format!("close {c:?}")),
         None => ConnectError::Ws("close sem código".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests_url {
+    use super::*;
+
+    #[test]
+    fn adiciona_barra_e_params() {
+        assert_eq!(
+            gateway_url_with_params("wss://gateway.fluxer.app"),
+            "wss://gateway.fluxer.app/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gateway.fluxer.app/"),
+            "wss://gateway.fluxer.app/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gw.example.com/?v=1&encoding=json"),
+            "wss://gw.example.com/?v=1&encoding=json"
+        );
+        assert_eq!(
+            gateway_url_with_params("wss://gw.example.com/?v=1"),
+            "wss://gw.example.com/?v=1&encoding=json"
+        );
     }
 }

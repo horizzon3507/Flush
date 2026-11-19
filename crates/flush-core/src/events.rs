@@ -44,6 +44,7 @@ pub struct GuildReady {
 
 /// Eventos tipados que o Flush decodifica (subset de paridade inicial).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     Ready(ReadyPayload),
     Resumed {
