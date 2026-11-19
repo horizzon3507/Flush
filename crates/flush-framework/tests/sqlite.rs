@@ -126,9 +126,22 @@ fn unknown_schema_is_refused_untouched() {
         [],
     )
     .unwrap();
+    raw.pragma_update(None, "journal_mode", "DELETE").unwrap();
     drop(raw);
+    #[cfg(unix)]
+    let mode = {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        || std::fs::metadata(&path).unwrap().permissions().mode() & 0o777
+    };
     assert!(matches!(SqliteStore::open(&path), Err(StoreError::Corrupt)));
+    #[cfg(unix)]
+    assert_eq!(mode(), 0o640);
     let raw = rusqlite::Connection::open(&path).unwrap();
+    let journal: String = raw
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(journal, "delete");
     let (version, rows): (String, i64) = raw
         .query_row(
             "SELECT (SELECT value FROM flush_meta WHERE key = 'schema'), (SELECT COUNT(*) FROM flush_variables)",

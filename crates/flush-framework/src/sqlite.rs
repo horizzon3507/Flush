@@ -190,12 +190,24 @@ impl SqliteStore {
                 restrict(parent, 0o700)?;
             }
         }
+        let created = !path.exists();
         let conn = Connection::open(&path)?;
-        restrict(&path, 0o600)?;
+        if created {
+            restrict(&path, 0o600)?;
+        }
         conn.busy_timeout(Duration::from_secs(5))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "synchronous", "FULL")?;
-        Self::init(conn, Some(path))
+        // The schema check comes first so a refused file keeps its journal
+        // mode and permissions.
+        let store = Self::init(conn, Some(path))?;
+        store.read(|conn| {
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+            conn.pragma_update(None, "synchronous", "FULL")?;
+            Ok(())
+        })?;
+        if let Some(path) = store.path() {
+            restrict(path, 0o600)?;
+        }
+        Ok(store)
     }
 
     /// `data/flush.sqlite` under the same data directory as the JSON stores.

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use flush_framework::{
-    execute_operations, MemoryVariableStore, SqliteStore, Ttl, VariableError, VariableOperation,
+    execute_operations, MemoryVariableStore, Ttl, VariableError, VariableOperation,
     VariableQueryOptions, VariableScope, VariableService, VariableStore,
 };
 use serde_json::{json, Value};
@@ -255,6 +255,56 @@ fn queries<S: VariableStore>(store: S) {
     ));
 }
 
+/// Store whose lock takes "time" to get: the clock jumps before the body runs.
+struct SlowLock {
+    inner: MemoryVariableStore,
+    clock: Arc<AtomicU64>,
+}
+
+impl VariableStore for SlowLock {
+    fn read_entry(
+        &self,
+        key: &flush_framework::VariableKey,
+        now: u64,
+    ) -> Result<Option<flush_framework::StoredVariable>, flush_framework::StoreError> {
+        self.inner.read_entry(key, now)
+    }
+    fn query(
+        &self,
+        query: &flush_framework::VariableQuery,
+        now: u64,
+    ) -> Result<flush_framework::VariablePage, flush_framework::StoreError> {
+        self.inner.query(query, now)
+    }
+    fn transact(
+        &self,
+        body: &mut dyn FnMut(&mut dyn flush_framework::VariableAccess) -> Result<(), VariableError>,
+    ) -> Result<(), VariableError> {
+        self.clock.fetch_add(1_000, Ordering::SeqCst);
+        self.inner.transact(body)
+    }
+    fn sweep_expired(&self, now: u64, limit: usize) -> Result<usize, flush_framework::StoreError> {
+        self.inner.sweep_expired(now, limit)
+    }
+}
+
+/// A value that expires while a transaction waits for the store is gone when
+/// the transaction runs, so clearing its TTL cannot make it permanent.
+#[test]
+fn expiry_during_lock_wait_is_seen() {
+    let clock = Arc::new(AtomicU64::new(1_000));
+    let tick = clock.clone();
+    let store = SlowLock {
+        inner: MemoryVariableStore::new(),
+        clock: clock.clone(),
+    };
+    let vars = VariableService::new(Arc::new(store), Some("g1"), Some("u1"))
+        .with_clock(move || tick.load(Ordering::SeqCst));
+    vars.set_with_ttl(Guild, "temp", json!(1), 500).unwrap();
+    assert!(!vars.expire(Guild, "temp", None).unwrap());
+    assert_eq!(vars.get(Guild, "temp").unwrap(), None);
+}
+
 fn validation<S: VariableStore>(store: S) {
     let Fixture { vars, .. } = fixture(store);
     let longest = "n".repeat(128);
@@ -279,6 +329,63 @@ fn validation<S: VariableStore>(store: S) {
         Err(VariableError::Operation(_))
     ));
 
+    // Values nested past the limit are refused instead of stored unreadable.
+    let nested = |depth: usize| (0..depth).fold(json!(1), |inner, _| json!([inner]));
+    vars.set(Guild, "deep", nested(64)).unwrap();
+    assert_eq!(vars.get(Guild, "deep").unwrap(), Some(nested(64)));
+    assert!(matches!(
+        vars.set(Guild, "deep", nested(65)),
+        Err(VariableError::Value)
+    ));
+    assert!(matches!(
+        vars.update(Guild, "deep", json!(0), |_| Ok(nested(200))),
+        Err(VariableError::Value)
+    ));
+    assert_eq!(vars.get(Guild, "deep").unwrap(), Some(nested(64)));
+
+    // Floats come back bit for bit.
+    for float in [
+        0.1 + 0.2,
+        1e-7,
+        5e-324,
+        1.7976931348623157e308,
+        0.3333333333333333,
+    ] {
+        vars.set(Guild, "float", json!(float)).unwrap();
+        assert_eq!(
+            vars.get(Guild, "float").unwrap().unwrap().as_f64(),
+            Some(float)
+        );
+    }
+
+    // Malformed operations are refused when parsed.
+    for bad in [
+        json!({"op": "expire", "scope": "guild", "name": "n"}),
+        json!({"op": "delete", "scope": "guild", "name": "n", "ttlMs": 5}),
+        json!({"op": "ttl", "scope": "guild", "name": "n", "value": 1}),
+        json!({"op": "set", "scope": "user", "name": "n", "value": 1, "userID": null}),
+        json!({"op": "increment", "scope": "guild", "name": "n", "delta": null}),
+        json!({"op": "increment", "scope": "guild", "name": "n", "fallback": null}),
+        json!({"op": "set", "scope": "guild", "name": "n"}),
+        json!({"op": "get", "scope": "guild", "name": "n", "extra": true}),
+        json!({"op": "get", "scope": "guild"}),
+    ] {
+        assert!(
+            serde_json::from_value::<VariableOperation>(bad.clone()).is_err(),
+            "{bad}"
+        );
+    }
+    for good in [
+        json!({"op": "expire", "scope": "guild", "name": "n", "ttlMs": null}),
+        json!({"op": "set", "scope": "guild", "name": "n", "value": null, "ttlMs": null}),
+        json!({"op": "get", "scope": "guild", "name": "n", "fallback": null}),
+        json!({"op": "increment", "scope": "user", "name": "n", "userID": "u2", "delta": 1.5}),
+    ] {
+        let parsed: VariableOperation = serde_json::from_value(good.clone()).unwrap();
+        let again = serde_json::from_value(serde_json::to_value(&parsed).unwrap()).unwrap();
+        assert_eq!(parsed, again, "{good}");
+    }
+
     let dm = VariableService::new(vars.store().clone(), None, Some("u1"));
     assert!(matches!(
         dm.set(Guild, "n", json!(1)),
@@ -300,8 +407,11 @@ macro_rules! both_stores {
             use super::*;
             #[test]
             fn memory() { super::$name(MemoryVariableStore::new()); }
+            #[cfg(feature = "sqlite")]
             #[test]
-            fn sqlite() { super::$name(SqliteStore::open_in_memory().unwrap()); }
+            fn sqlite() {
+                super::$name(flush_framework::SqliteStore::open_in_memory().unwrap());
+            }
         }
     )*};
 }

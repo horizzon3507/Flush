@@ -43,6 +43,8 @@ pub enum VariableError {
     Ttl,
     #[error("prefix and cursor take up to 128 characters; limit must be 1 to 100")]
     Query,
+    #[error("a variable value nests at most 64 levels deep")]
+    Value,
     #[error("{0}")]
     Operation(String),
     #[error(transparent)]
@@ -353,6 +355,26 @@ fn user_id(id: &str) -> Result<&str, VariableError> {
     Ok(id)
 }
 
+/// Deepest nesting a stored value may have; keeps it inside what the JSON
+/// parser reads back.
+pub const VALUE_DEPTH_MAX: usize = 64;
+
+fn check_depth(value: &Value) -> Result<(), VariableError> {
+    let mut stack = vec![(value, 1usize)];
+    while let Some((value, depth)) = stack.pop() {
+        let children: Box<dyn Iterator<Item = &Value>> = match value {
+            Value::Array(items) => Box::new(items.iter()),
+            Value::Object(map) => Box::new(map.values()),
+            _ => continue,
+        };
+        if depth > VALUE_DEPTH_MAX {
+            return Err(VariableError::Value);
+        }
+        stack.extend(children.map(|child| (child, depth + 1)));
+    }
+    Ok(())
+}
+
 fn expiry(ttl_ms: Option<u64>, now: u64) -> Result<Option<u64>, VariableError> {
     match ttl_ms {
         None => Ok(None),
@@ -546,13 +568,19 @@ impl<S: VariableStore> VariableService<S> {
 
     /// Runs several operations atomically. Returning an error rolls every
     /// write back.
+    ///
+    /// Use only the transaction handle inside `body`: calling this service
+    /// (or another one on the same store) from there waits on the lock the
+    /// transaction already holds.
     pub fn transaction<T>(
         &self,
         mut body: impl FnMut(&mut VariableTransaction<'_>) -> Result<T, VariableError>,
     ) -> Result<T, VariableError> {
-        let now = (self.clock)();
         let mut out = None;
         self.store.transact(&mut |access| {
+            // Read the clock once the store lock is held: a value that
+            // expired while waiting must not look live.
+            let now = (self.clock)();
             let mut tx = VariableTransaction {
                 access,
                 actor: &self.actor,
@@ -648,6 +676,7 @@ impl ScopedVariables<'_, '_> {
     ) -> Result<(), VariableError> {
         let key = self.key(name)?;
         let at = expiry(ttl_ms, self.tx.now)?;
+        check_depth(&value)?;
         Ok(self.tx.access.set(&key, &value, at)?)
     }
 
@@ -666,6 +695,7 @@ impl ScopedVariables<'_, '_> {
         let current = self.entry(&key)?;
         let at = current.as_ref().and_then(|c| c.expires_at);
         let value = updater(current.map(|c| c.value).unwrap_or(fallback))?;
+        check_depth(&value)?;
         self.tx.access.set(&key, &value, at)?;
         Ok(value)
     }
@@ -716,16 +746,16 @@ fn number(value: f64) -> Result<Value, VariableError> {
     Ok(Value::from(value))
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "lowercase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
 pub enum OperationKind {
     Get {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         fallback: Option<Value>,
     },
     Set {
         value: Value,
-        #[serde(default, rename = "ttlMs", skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "ttlMs", skip_serializing_if = "Option::is_none")]
         ttl_ms: Option<u64>,
     },
     Delete,
@@ -735,23 +765,106 @@ pub enum OperationKind {
         ttl_ms: Option<u64>,
     },
     Increment {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         delta: Option<f64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         fallback: Option<f64>,
     },
 }
 
 /// One step of a data transaction, in Yuzuha's JSON shape:
 /// `{"op":"set","scope":"guild","name":"n","value":1,"ttlMs":500}`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Parsing is strict, as in Yuzuha's `dataOperations`: a field the operation
+/// does not take, a missing `ttlMs` on `expire` and a `null` where a value is
+/// expected are all errors.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct VariableOperation {
     pub scope: VariableScope,
     pub name: String,
-    #[serde(default, rename = "userID", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "userID", skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(flatten)]
     pub kind: OperationKind,
+}
+
+impl<'de> Deserialize<'de> for VariableOperation {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+
+        let mut map = serde_json::Map::deserialize(deserializer)?;
+        fn required<T: serde::de::DeserializeOwned, E: Error>(
+            map: &mut serde_json::Map<String, Value>,
+            field: &'static str,
+        ) -> Result<T, E> {
+            let value = map.remove(field).ok_or_else(|| E::missing_field(field))?;
+            serde_json::from_value(value).map_err(|e| E::custom(format!("{field}: {e}")))
+        }
+        // Absent is `None`; an explicit `null` is rejected by `T`.
+        fn optional<T: serde::de::DeserializeOwned, E: Error>(
+            map: &mut serde_json::Map<String, Value>,
+            field: &'static str,
+        ) -> Result<Option<T>, E> {
+            match map.remove(field) {
+                None => Ok(None),
+                Some(value) => serde_json::from_value(value)
+                    .map(Some)
+                    .map_err(|e| E::custom(format!("{field}: {e}"))),
+            }
+        }
+        fn finite<E: Error>(value: Option<f64>, field: &str) -> Result<Option<f64>, E> {
+            match value {
+                Some(number) if !number.is_finite() => {
+                    Err(E::custom(format!("{field} must be a finite number")))
+                }
+                other => Ok(other),
+            }
+        }
+
+        let op: String = required(&mut map, "op")?;
+        let scope = required(&mut map, "scope")?;
+        let name = required(&mut map, "name")?;
+        let user_id = optional(&mut map, "userID")?;
+        let kind = match op.as_str() {
+            "get" => OperationKind::Get {
+                // Any JSON value is a fallback, `null` included.
+                fallback: map.remove("fallback"),
+            },
+            "set" => OperationKind::Set {
+                value: map
+                    .remove("value")
+                    .ok_or_else(|| D::Error::missing_field("value"))?,
+                // Yuzuha takes `ttlMs: null` on `set` as "no expiry".
+                ttl_ms: optional::<Option<u64>, _>(&mut map, "ttlMs")?.flatten(),
+            },
+            "delete" => OperationKind::Delete,
+            "ttl" => OperationKind::Ttl,
+            "expire" => OperationKind::Expire {
+                ttl_ms: required(&mut map, "ttlMs")?,
+            },
+            "increment" => OperationKind::Increment {
+                delta: finite(optional(&mut map, "delta")?, "delta")?,
+                fallback: finite(optional(&mut map, "fallback")?, "fallback")?,
+            },
+            other => {
+                return Err(D::Error::unknown_variant(
+                    other,
+                    &["get", "set", "delete", "ttl", "expire", "increment"],
+                ))
+            }
+        };
+        if let Some(field) = map.keys().next() {
+            return Err(D::Error::custom(format!(
+                "`{op}` does not take the field `{field}`"
+            )));
+        }
+        Ok(Self {
+            scope,
+            name,
+            user_id,
+            kind,
+        })
+    }
 }
 
 /// Runs up to [`DATA_TRANSACTION_MAX`] operations and returns one JSON result

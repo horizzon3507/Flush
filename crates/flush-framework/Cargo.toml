@@ -11,7 +11,7 @@ flush-core = { path = "../flush-core", version = "0.2.0" }
 flush-gateway = { path = "../flush-gateway", version = "0.2.0" }
 flush-rest = { path = "../flush-rest", version = "0.2.0" }
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror.workspace = true
 async-std.workspace = true
 futures.workspace = true
@@ -27,8 +27,4 @@ rusqlite.workspace = true
 
 [[test]]
 name = "sqlite"
-required-features = ["sqlite"]
-
-[[test]]
-name = "variables"
 required-features = ["sqlite"]
