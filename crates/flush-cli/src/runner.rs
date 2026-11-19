@@ -83,9 +83,19 @@ pub fn executable_from_messages(output: &str) -> Option<PathBuf> {
         .next_back()
 }
 
-/// Builds the project and returns the bot binary. Compiler output goes to stderr.
-pub fn build(dir: &Path, release: bool) -> Result<PathBuf, CliError> {
-    let mut command = cargo();
+/// Builds the project and returns the bot binary. Compiler output goes to
+/// stderr. When `stopping` is raised the build is killed and fails with
+/// `INTERRUPTED`.
+pub fn build(dir: &Path, release: bool, stopping: &AtomicBool) -> Result<PathBuf, CliError> {
+    build_with(cargo(), dir, release, stopping)
+}
+
+fn build_with(
+    mut command: Command,
+    dir: &Path,
+    release: bool,
+    stopping: &AtomicBool,
+) -> Result<PathBuf, CliError> {
     command
         .arg("build")
         .arg("--message-format=json-render-diagnostics")
@@ -96,14 +106,43 @@ pub fn build(dir: &Path, release: bool) -> Result<PathBuf, CliError> {
     if release {
         command.arg("--release");
     }
-    let output = command
-        .output()
+    let mut cargo = command
+        .spawn()
         .map_err(|e| CliError::new("BUILD_FAILED", format!("Cannot run cargo: {e}.")))?;
-    if !output.status.success() {
+    let mut stdout = cargo.stdout.take();
+    let messages = std::thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(stdout) = stdout.as_mut() {
+            let _ = std::io::Read::read_to_string(stdout, &mut text);
+        }
+        text
+    });
+    let status = loop {
+        if let Some(status) = cargo.try_wait()? {
+            break status;
+        }
+        if stopping.load(Ordering::Relaxed) {
+            let _ = cargo.kill();
+            let _ = cargo.wait();
+            return Err(CliError::new("INTERRUPTED", "The build was interrupted."));
+        }
+        std::thread::sleep(POLL);
+    };
+    let messages = messages.join().unwrap_or_default();
+    if !status.success() {
         return Err(CliError::new("BUILD_FAILED", "cargo build failed."));
     }
-    executable_from_messages(&String::from_utf8_lossy(&output.stdout))
+    executable_from_messages(&messages)
         .ok_or_else(|| CliError::new("BUILD_FAILED", "The project builds no binary."))
+}
+
+/// A signal during a build ends the command cleanly; other failures stay errors.
+fn interrupted(error: CliError) -> Result<i32, CliError> {
+    if error.code == "INTERRUPTED" {
+        Ok(0)
+    } else {
+        Err(error)
+    }
 }
 
 /// The bot process: project directory as working directory, `.env` values
@@ -195,8 +234,11 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 /// Production run: release build, then the bot until it exits or a signal arrives.
 pub fn run(input: Option<&Path>) -> Result<i32, CliError> {
     let project = prepare(input)?;
-    let executable = build(&project.dir, true)?;
     let stopping = signals()?;
+    let executable = match build(&project.dir, true, &stopping) {
+        Ok(executable) => executable,
+        Err(error) => return interrupted(error),
+    };
     let mut child = spawn(&executable, &project)?;
     loop {
         if let Some(status) = child.try_wait()? {
@@ -218,8 +260,11 @@ pub fn dev(input: Option<&Path>) -> Result<i32, CliError> {
     // while the first build runs still triggers a reload.
     let mut seen = snapshot(&dir, &config_path);
     let mut project = prepare(Some(&config_path))?;
-    let executable = build(&project.dir, false)?;
     let stopping = signals()?;
+    let executable = match build(&project.dir, false, &stopping) {
+        Ok(executable) => executable,
+        Err(error) => return interrupted(error),
+    };
     let mut child = Some(spawn(&executable, &project)?);
     eprintln!("flush dev: watching {} for changes.", project.dir.display());
     loop {
@@ -247,9 +292,11 @@ pub fn dev(input: Option<&Path>) -> Result<i32, CliError> {
                 current = next;
             }
             seen = current;
-            let rebuilt = prepare(Some(&project.config_path))
-                .and_then(|next| build(&next.dir, false).map(|executable| (next, executable)));
+            let rebuilt = prepare(Some(&project.config_path)).and_then(|next| {
+                build(&next.dir, false, &stopping).map(|executable| (next, executable))
+            });
             match rebuilt {
+                Ok(_) if stopping.load(Ordering::Relaxed) => {}
                 Ok((next, executable)) => {
                     if let Some(mut old) = child.take() {
                         stop(&mut old, SHUTDOWN_TIMEOUT);
@@ -258,6 +305,8 @@ pub fn dev(input: Option<&Path>) -> Result<i32, CliError> {
                     child = Some(spawn(&executable, &project)?);
                     eprintln!("flush dev: restarted.");
                 }
+                // The signal is handled at the top of the loop, which stops the bot.
+                Err(error) if error.code == "INTERRUPTED" => {}
                 Err(error) => {
                     eprintln!("flush dev: reload refused: {error} The previous version stays up.")
                 }
@@ -333,6 +382,23 @@ mod tests {
             let project = prepare(Some(&dir)).unwrap();
             assert!(project.env.iter().any(|(key, _)| key == "FLUXER_BOT_TOKEN"));
         }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_signal_interrupts_the_build() {
+        let dir = temp("interrupt");
+        let fake = dir.join("cargo");
+        std::fs::write(&fake, "#!/bin/sh\nsleep 30\n").unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let stopping = AtomicBool::new(true);
+        let started = Instant::now();
+        let error = build_with(Command::new(&fake), &dir, false, &stopping).unwrap_err();
+        assert_eq!(error.code, "INTERRUPTED");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(interrupted(error), Ok(0));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
