@@ -45,16 +45,26 @@ impl<T: Clone> Registry<T> {
     }
 
     fn offer(&self, item: &T) {
+        // Filters run without the lock held, so they may use the registry.
+        let current = {
+            let mut waiters = self.waiters.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *waiters)
+        };
+        let mut kept: Vec<Waiter<T>> = current
+            .into_iter()
+            .filter(|w| {
+                if w.tx.is_closed() {
+                    return false;
+                }
+                if (w.filter)(item) {
+                    return w.tx.try_send(item.clone()).is_ok();
+                }
+                true
+            })
+            .collect();
         let mut waiters = self.waiters.lock().unwrap_or_else(|e| e.into_inner());
-        waiters.retain(|w| {
-            if w.tx.is_closed() {
-                return false;
-            }
-            if (w.filter)(item) {
-                return w.tx.try_send(item.clone()).is_ok();
-            }
-            true
-        });
+        kept.append(&mut waiters);
+        *waiters = kept;
     }
 
     fn len(&self) -> usize {
