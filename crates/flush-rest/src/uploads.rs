@@ -194,6 +194,14 @@ impl RestClient {
             })
             .collect();
         let plan = self.request_attachment_uploads(channel, &wanted).await?;
+        let mut planned: Vec<u64> = plan.iter().map(|p| p.id).collect();
+        planned.sort_unstable();
+        if planned != (0..files.len() as u64).collect::<Vec<_>>() {
+            return Err(RestError::BadResponse(format!(
+                "upload plan covers file ids {planned:?}, expected one entry for each of {} files",
+                files.len()
+            )));
+        }
         let mut multipart = Vec::new();
         let mut refs = Vec::with_capacity(plan.len());
         for item in &plan {

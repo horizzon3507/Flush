@@ -217,6 +217,25 @@ async fn upload_plan_puts_bytes_and_completes_multipart() {
 }
 
 #[async_std::test]
+async fn incomplete_upload_plan_is_rejected_before_uploading() {
+    let respond: Responder = Arc::new(|_, base| {
+        (
+            200,
+            json!({ "attachments": [{ "id": 0, "upload_filename": "up/a",
+                "upload_mode": "singlepart", "upload_url": format!("{base}/store/a") }] }),
+        )
+    });
+    let (rest, log) = start(respond).await;
+    let files = [FileUpload::new("a", vec![1]), FileUpload::new("b", vec![2])];
+    let err = rest
+        .upload_attachments(Snowflake(10), &files)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, RestError::BadResponse(_)), "{err}");
+    assert_eq!(log.lock().unwrap().len(), 1);
+}
+
+#[async_std::test]
 async fn failed_presigned_put_is_reported() {
     let respond: Responder = Arc::new(|seen, base| match seen.path.as_str() {
         "/v1/channels/10/attachments" => (
