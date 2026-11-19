@@ -247,6 +247,16 @@ async fn invalid_shard_close_is_fatal() {
 /// A gateway whose first connection is slow to say Hello, and which asks the
 /// client to reconnect (op 7) when it receives a presence update, if `kick`.
 async fn slow_gateway(first_hello_delay: Duration, kick: bool) -> (String, Timeline) {
+    odd_gateway(first_hello_delay, kick, false).await
+}
+
+/// Like [`slow_gateway`]; with `reject_first`, the first connection's Identify
+/// is answered with close 4010 (invalid shard).
+async fn odd_gateway(
+    first_hello_delay: Duration,
+    kick: bool,
+    reject_first: bool,
+) -> (String, Timeline) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
     let timeline: Timeline = Arc::new(Mutex::new(Vec::new()));
@@ -259,8 +269,9 @@ async fn slow_gateway(first_hello_delay: Duration, kick: bool) -> (String, Timel
             } else {
                 Duration::ZERO
             };
+            let reject = first && reject_first;
             first = false;
-            async_std::task::spawn(serve_slow(stream, log.clone(), delay, kick));
+            async_std::task::spawn(serve_slow(stream, log.clone(), delay, kick, reject));
         }
     });
     (url, timeline)
@@ -269,7 +280,13 @@ async fn slow_gateway(first_hello_delay: Duration, kick: bool) -> (String, Timel
 /// `(op, when)` per client frame, heartbeats left out.
 type Timeline = Arc<Mutex<Vec<(u64, Instant)>>>;
 
-async fn serve_slow(stream: TcpStream, timeline: Timeline, hello_delay: Duration, kick: bool) {
+async fn serve_slow(
+    stream: TcpStream,
+    timeline: Timeline,
+    hello_delay: Duration,
+    kick: bool,
+    reject: bool,
+) {
     let mut ws = async_tungstenite::accept_async(stream).await.unwrap();
     async_std::task::sleep(hello_delay).await;
     let hello = json!({"op": 10, "d": {"heartbeat_interval": 45_000}});
@@ -287,6 +304,15 @@ async fn serve_slow(stream: TcpStream, timeline: Timeline, hello_delay: Duration
             continue;
         }
         timeline.lock().unwrap().push((op, Instant::now()));
+        if op == 2 && reject {
+            use async_tungstenite::tungstenite::protocol::CloseFrame;
+            let frame = CloseFrame {
+                code: 4010.into(),
+                reason: "".into(),
+            };
+            let _ = ws.send(Message::Close(Some(frame))).await;
+            return;
+        }
         let reply = match op {
             2 => json!({"op": 0, "t": "READY", "s": 1, "d": {"session_id": "s", "guilds": []}}),
             6 => json!({"op": 0, "t": "RESUMED", "s": 2, "d": {}}),
@@ -402,4 +428,60 @@ async fn server_reconnect_and_shutdown_report_status_changes() {
         }
     }
     assert!(closed, "shutdown emitted no Closed status");
+}
+
+#[async_std::test]
+async fn fatal_identify_still_spaces_the_next_shard() {
+    let gap = Duration::from_millis(150);
+    let (url, timeline) = odd_gateway(Duration::ZERO, false, true).await;
+    let plan = ShardPlan::all(2).unwrap();
+    let options = ShardManagerOptions {
+        identify_delay: gap,
+        retry_delay: Duration::from_millis(20),
+    };
+    let mut manager = ShardManager::spawn(ClientConfig::new("token", url), plan, options).unwrap();
+    let mut fatal = false;
+    let mut ready = false;
+    while !(fatal && ready) {
+        match next(&mut manager).await {
+            ShardEvent::Fatal { .. } => fatal = true,
+            ShardEvent::Dispatch { event, .. } if matches!(*event, Event::Ready(_)) => ready = true,
+            _ => {}
+        }
+    }
+    let identifies = times(&timeline, 2);
+    assert_eq!(identifies.len(), 2);
+    let spacing = identifies[1].duration_since(identifies[0]);
+    assert!(spacing >= gap, "identifies only {spacing:?} apart");
+    manager.shutdown().await;
+}
+
+#[async_std::test]
+async fn shutdown_reports_closed_after_unread_events() {
+    let (url, _seen) = fake_gateway(None).await;
+    let plan = ShardPlan::all(2).unwrap();
+    let mut manager =
+        ShardManager::spawn(ClientConfig::new("token", url), plan, options()).unwrap();
+    // Let both shards become ready without reading any of their events.
+    for _ in 0..500 {
+        if manager
+            .statuses()
+            .iter()
+            .all(|s| s.status == ShardStatus::Ready)
+        {
+            break;
+        }
+        async_std::task::sleep(Duration::from_millis(10)).await;
+    }
+    manager.shutdown().await;
+    let mut last = std::collections::BTreeMap::new();
+    while let Some(event) = manager.next().await {
+        if let ShardEvent::StatusChanged { shard_id, status } = event {
+            last.insert(shard_id, status);
+        }
+    }
+    assert_eq!(
+        last.into_iter().collect::<Vec<_>>(),
+        vec![(0, ShardStatus::Closed), (1, ShardStatus::Closed)]
+    );
 }

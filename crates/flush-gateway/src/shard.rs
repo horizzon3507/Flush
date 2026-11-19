@@ -341,10 +341,16 @@ impl ShardManager {
 
     /// Stops every shard and waits for their tasks to end.
     pub async fn shutdown(&mut self) {
-        for (&id, shard) in self.shards.iter_mut() {
+        for shard in self.shards.values_mut() {
             if let Some(task) = shard.task.take() {
                 task.cancel().await;
             }
+        }
+        // Events the shards emitted before stopping stay ahead of `Closed`.
+        while let Ok(event) = self.events.try_recv() {
+            self.pending.push_back(event);
+        }
+        for &id in self.shards.keys() {
             let mut map = self.statuses.lock().unwrap_or_else(|e| e.into_inner());
             if map.insert(id, ShardStatus::Closed) != Some(ShardStatus::Closed) {
                 self.pending.push_back(ShardEvent::StatusChanged {
@@ -381,9 +387,13 @@ fn set_status(
     }
 }
 
-fn release(slot: &mut Option<futures::lock::OwnedMutexGuard<Option<Instant>>>) {
-    if let Some(mut guard) = slot.take() {
-        *guard = Some(Instant::now());
+/// A shard's turn to identify. Giving it up, on any path including a fatal
+/// close or cancellation, stamps the gate so the next shard waits its delay.
+struct IdentifySlot(futures::lock::OwnedMutexGuard<Option<Instant>>);
+
+impl Drop for IdentifySlot {
+    fn drop(&mut self) {
+        *self.0 = Some(Instant::now());
     }
 }
 
@@ -404,8 +414,8 @@ async fn run_shard(
 ) {
     // Held until this shard's first Identify is answered (or fails), so the
     // next shard identifies at least `identify_delay` after that.
-    let mut slot = Some(gate.lock_owned().await);
-    if let Some(Some(last)) = slot.as_deref() {
+    let mut slot = Some(IdentifySlot(gate.lock_owned().await));
+    if let Some(last) = slot.as_ref().and_then(|s| *s.0) {
         let wait = identify_delay.saturating_sub(last.elapsed());
         if !wait.is_zero() {
             async_std::task::sleep(wait).await;
@@ -439,7 +449,7 @@ async fn run_shard(
                     Event::Ready(_) | Event::Resumed { .. } => {
                         info!("gateway: shard {id} ready");
                         set_status(&statuses, &events, id, ShardStatus::Ready);
-                        release(&mut slot);
+                        drop(slot.take());
                     }
                     _ => {}
                 }
@@ -456,7 +466,7 @@ async fn run_shard(
                 warn!("gateway: shard {id} dropped ({error}), retrying in {retry_delay:?}");
                 set_status(&statuses, &events, id, ShardStatus::Reconnecting);
                 client.disconnect();
-                release(&mut slot);
+                drop(slot.take());
                 async_std::task::sleep(retry_delay).await;
             }
             Either::Left(Err(error)) => {
