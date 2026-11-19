@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Framework de comandos com prefixo do Flush (roteador, cooldown, reply, config por servidor)"
+description = "Flush prefix command framework (router, typed arguments, middleware, collectors, scheduler, per-server config)"
 
 [dependencies]
 flush-core = { path = "../flush-core", version = "0.1.3" }

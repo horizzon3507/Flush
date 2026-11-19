@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Flush: framework/lib em Rust para bots do Fluxer (gateway + REST + comandos)"
+description = "Flush: a Rust framework/library for Fluxer bots (gateway + REST + commands)"
 
 [dependencies]
 flush-core = { path = "../flush-core", version = "0.1.3" }

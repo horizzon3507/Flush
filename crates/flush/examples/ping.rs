@@ -91,7 +91,7 @@ impl Command for Warn {
         "Warns a member: warn <target> [reason]"
     }
     fn usage(&self) -> Option<&str> {
-        Some("warn <alvo> [motivo]")
+        Some("warn <target> [reason]")
     }
     fn required_permission(&self) -> Option<PermissionAction> {
         Some(PermissionAction::Moderate)
@@ -107,7 +107,7 @@ impl Command for Warn {
                 return Ok(());
             };
             let Some(mention) = ctx.args.first() else {
-                ctx.reply_no_ping("❌ Uso: `warn <alvo> [motivo]`").await?;
+                ctx.reply_no_ping("❌ Usage: `warn <target> [reason]`").await?;
                 return Ok(());
             };
             let reason = ctx

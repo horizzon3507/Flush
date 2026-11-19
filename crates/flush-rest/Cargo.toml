@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Cliente REST /v1 do Flush sobre surf + discovery /.well-known/fluxer"
+description = "Flush /v1 REST client on surf + /.well-known/fluxer discovery"
 
 [dependencies]
 flush-core = { path = "../flush-core", version = "0.1.3" }

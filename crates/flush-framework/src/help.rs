@@ -53,7 +53,7 @@ impl Help {
         })?;
         let mut lines = vec![format!("`{}`", c.description)];
         if let Some(u) = &c.usage {
-            lines.push(format!("Uso: `{u}`"));
+            lines.push(format!("Usage: `{u}`"));
         }
         if !c.aliases.is_empty() {
             lines.push(format!("Aliases: `{}`", c.aliases.join(", ")));
@@ -98,7 +98,7 @@ impl Command for Help {
     }
 
     fn usage(&self) -> Option<&str> {
-        Some("help [nome]")
+        Some("help [name]")
     }
 
     fn execute<'a>(

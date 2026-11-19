@@ -162,7 +162,7 @@ mod tests {
         assert_eq!(
             r.flags,
             [
-                ("tempo".to_owned(), Some("5".into())),
+                ("time".to_owned(), Some("5".into())),
                 ("x".to_owned(), None)
             ]
         );
