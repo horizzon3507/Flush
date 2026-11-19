@@ -12,6 +12,7 @@ pub mod embed;
 pub mod emoji;
 pub mod error;
 pub mod events;
+pub mod gateway_events;
 pub mod guild;
 pub mod invite;
 pub mod message;
@@ -39,11 +40,18 @@ pub use emoji::{BulkCreateResult, BulkFailure, Emoji, ExpressionMetadata, Sticke
 pub use error::CoreError;
 pub use events::{is_known_dispatch, DISPATCH_EVENTS};
 pub use events::{DispatchEnvelope, Event, GuildReady, PresencePayload, ReadyPayload};
+pub use gateway_events::{
+    AuthSessionChange, Call, ChannelMemberCount, ChannelOverride, CustomStatus, EntranceSoundPlay,
+    FavoriteMeme, ForumUnread, GatewaySession, GuildCount, GuildMemberListUpdate, GuildSync,
+    MemberListGroup, MemberListOp, PassiveUpdates, ReactionAddEntry, RecentMentionDelete,
+    Relationship, RelationshipType, ThreadMemberListEntry, UserConnection, UserGuildSettings,
+    UserSettings, VoiceStateAck, WebAuthnCredential,
+};
 pub use guild::{Guild, GuildFlat, GuildMember, GuildSnapshot, MemberUser, Role};
 pub use invite::Invite;
 pub use message::{
-    AllowedMentions, Message, MessageAttachment, MessageReference, MessageSend, MessageType,
-    Reaction, ReactionEmoji,
+    AllowedMentions, AttachmentRef, Message, MessageAttachment, MessageReference, MessageSend,
+    MessageType, Reaction, ReactionEmoji,
 };
 pub use permissions::Permissions;
 pub use presence::{Activity, Presence, PresenceStatus};

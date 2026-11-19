@@ -19,7 +19,7 @@ pub enum RestError {
     },
     #[error("rate limited, retry in {retry_after_secs}s")]
     RateLimited { retry_after_secs: u64 },
-    #[error("rede/http: {0}")]
+    #[error("network/http: {0}")]
     Transport(String),
     #[error("invalid response: {0}")]
     BadResponse(String),

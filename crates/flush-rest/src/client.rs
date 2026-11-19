@@ -173,6 +173,12 @@ pub struct InviteCreate {
     pub unique: Option<bool>,
 }
 
+enum Payload {
+    Empty,
+    Json(serde_json::Value),
+    Bytes { content_type: String, data: Vec<u8> },
+}
+
 #[derive(Debug, Clone)]
 pub struct RestClient {
     http: surf::Client,
@@ -284,6 +290,66 @@ impl RestClient {
         query: Option<&str>,
         authed: bool,
     ) -> Result<T, RestError> {
+        let payload = match body {
+            Some(b) => Payload::Json(b),
+            None => Payload::Empty,
+        };
+        self.send(method, path, payload, audit, query, authed).await
+    }
+
+    /// Authenticated request carrying a pre-encoded body (multipart forms).
+    pub(crate) async fn request_bytes<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: &str,
+        data: Vec<u8>,
+        audit: Option<&str>,
+    ) -> Result<T, RestError> {
+        let payload = Payload::Bytes {
+            content_type: content_type.to_owned(),
+            data,
+        };
+        self.send(method, path, payload, audit, None, true).await
+    }
+
+    /// `PUT`s raw bytes to an absolute URL without the bot token
+    /// (presigned upload URLs carry their own authorization).
+    pub(crate) async fn put_presigned(
+        &self,
+        url: &str,
+        content_type: &str,
+        data: Vec<u8>,
+    ) -> Result<(), RestError> {
+        let mut resp = self
+            .http
+            .put(url)
+            .header("Content-Type", content_type)
+            .body(surf::Body::from_bytes(data))
+            .await
+            .map_err(|e| RestError::Transport(e.to_string()))?;
+        let status = u16::from(resp.status());
+        if (200..300).contains(&status) {
+            return Ok(());
+        }
+        let text = resp.body_string().await.unwrap_or_default();
+        Err(RestError::Api {
+            status,
+            code: "UPLOAD_FAILED".into(),
+            message: text.chars().take(300).collect(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn send<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        path: &str,
+        body: Payload,
+        audit: Option<&str>,
+        query: Option<&str>,
+        authed: bool,
+    ) -> Result<T, RestError> {
         let mut attempt = 0u8;
         loop {
             let mut url = self.url(path);
@@ -306,10 +372,13 @@ impl RestClient {
                 }
             }
             let req = match &body {
-                Some(b) => req
+                Payload::Json(b) => req
                     .body_json(b)
                     .map_err(|e| RestError::Transport(format!("serialize body: {e}")))?,
-                None => req,
+                Payload::Bytes { content_type, data } => req
+                    .header("Content-Type", content_type.as_str())
+                    .body(surf::Body::from_bytes(data.clone())),
+                Payload::Empty => req,
             };
             let mut resp = req.await.map_err(|e| RestError::Transport(e.to_string()))?;
             let status = u16::from(resp.status());
