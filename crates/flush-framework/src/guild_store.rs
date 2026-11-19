@@ -136,6 +136,14 @@ impl GuildStore {
         guild_id.map(|g| self.get(g).prefix).unwrap_or_default()
     }
 
+    /// Prefix saved for this guild, `None` when the guild has no stored settings.
+    pub fn stored_prefix(&mut self, guild_id: &str) -> Option<String> {
+        self.load()
+            .get(guild_id)
+            .map(|config| config.prefix.clone())
+            .filter(|prefix| !prefix.is_empty())
+    }
+
     pub fn update(&mut self, guild_id: &str, patch: GuildConfigPatch) -> GuildConfig {
         let mut cfg = self.get(guild_id);
         if let Some(p) = patch.prefix {
@@ -194,6 +202,23 @@ impl GuildStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_prefix_is_none_without_saved_settings() {
+        let dir = std::env::temp_dir().join(format!("flush-prefix-{}", std::process::id()));
+        let mut store = GuildStore::new(dir.join("guilds.json"));
+        assert_eq!(store.stored_prefix("123"), None);
+        store.update(
+            "123",
+            GuildConfigPatch {
+                prefix: Some("$".into()),
+                ..GuildConfigPatch::default()
+            },
+        );
+        assert_eq!(store.stored_prefix("123"), Some("$".into()));
+        assert_eq!(store.stored_prefix("456"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn update_roundtrip_atomic() {

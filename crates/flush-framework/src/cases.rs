@@ -80,6 +80,11 @@ impl CaseStore {
         Self::new(default_path())
     }
 
+    /// Number the next case of this guild will get.
+    pub fn next_id(&mut self, guild_id: &str) -> u64 {
+        self.load().get(guild_id).map_or(1, GuildCases::next)
+    }
+
     pub fn add(
         &mut self,
         guild_id: &str,
@@ -204,7 +209,9 @@ mod tests {
     fn sequential_ids_and_revert() {
         let dir = std::env::temp_dir().join(format!("flush-cases-{}", std::process::id()));
         let mut store = CaseStore::new(dir.join("cases.json"));
+        assert_eq!(store.next_id("g"), 1);
         let c1 = store.add("g", CaseType::Warn, "u", "m", "spam");
+        assert_eq!(store.next_id("g"), 2);
         let c2 = store.add("g", CaseType::Warn, "u", "m", "spam2");
         assert_eq!((c1.id, c2.id), (1, 2));
         assert_eq!(store.active_warns("g", "u"), 2);
