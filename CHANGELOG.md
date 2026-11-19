@@ -41,23 +41,6 @@ Critical connection fix for the `wss` gateway. This version was made for the Flu
 - **Gateway — handshake HTTP 400 fix**: `gateway_url_with_params` now guarantees a trailing `/` on the host before appending `?v=1&encoding=json`. With `tungstenite` ≥ 0.30 serializing `path_and_query` raw, a URL without a path (`wss://gateway.fluxer.app?v=1…`) went out as `GET ?v=1&encoding=json HTTP/1.1` and the gateway answered `HTTP 400 Bad Request`, so no bot on the framework could connect. The function also no longer duplicates the slash or params when the URL is already complete.
 - New regression test in `flush-gateway` covering 4 URL shapes (no slash, with slash, full query, partial query); the existing expectation in `protocol.rs` was updated.
 
-## v0.1.1 · 17/10/2026`); under it, a short summary ends with a plain sentence like: “This version was made for the Flush lib on 17/10/2026 (v0.1.1).”
-
-</details>
-
-## v0.1.4 · 19/10/2026
-
-Fix de `INVALID_FORM_BODY` em respostas de comando via DM (report do Sourbot). This version was made for the Flush lib on 19/10/2026 (v0.1.4).
-
-- **Core — fix de DM**: `MessageReference` não serializa mais `guild_id: null` nem `type: 0`. O Adam rejeita o form quando a referência carrega `guild_id` nulo e `type` Default (`400 INVALID_FORM_BODY`), o que quebrava todo `reply` de comando em DM; os campos agora são omitidos quando ausentes, espelhando o `toMessageReference` do SDK `@fluxerjs`. Em guild o payload não muda.
-
-## v0.1.3 · 18/10/2026
-
-Fix crítico de conexão no gateway `wss`. This version was made for the Flush lib on 18/10/2026 (v0.1.3).
-
-- **Gateway — fix do HTTP 400 no handshake**: `gateway_url_with_params` agora garante `/` no fim do host antes de anexar `?v=1&encoding=json`. Com o `tungstenite` ≥ 0.30 serializando `path_and_query` cru, a URL sem path (`wss://gateway.fluxer.app?v=1…`) saía como `GET ?v=1&encoding=json HTTP/1.1` e o gateway respondia `HTTP 400 Bad Request` — nenhum bot do framework conseguia conectar. A função também não duplica barra nem params se a URL já vier completa.
-- Teste de regressão novo no `flush-gateway` cobrindo 4 formatos de URL (sem barra, com barra, query completa, query parcial); expectativa do teste existente em `protocol.rs` atualizada.
-
 ## v0.1.1 · 17/10/2026
 
 Reactions, pins, invites, roles CRUD, per-command permission gates, hooks, embedded help and a mod log. This version was made for the Flush lib on 17/10/2026 (v0.1.1).
