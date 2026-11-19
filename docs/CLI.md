@@ -66,7 +66,8 @@ default_cooldown_ms = 0    # per-command default, 0 = off
 Unknown keys are rejected. The same loader is public API:
 `flush::bot_from_project(None)` finds the config (`FLUSH_CONFIG`, then
 `flush.toml` in the current directory), loads `.env`, points
-`FLUSH_DATA_DIR` at `data_dir` and builds the `Bot` with the token from
+`FLUSH_DATA_DIR` at `data_dir` (a `FLUSH_DATA_DIR` that is already set wins,
+for every store) and builds the `Bot` with the token from
 `FLUXER_BOT_TOKEN`; `flush::ProjectConfig` exposes the pieces.
 
 `run` and `dev` read the `.env` next to the config. Values already present in

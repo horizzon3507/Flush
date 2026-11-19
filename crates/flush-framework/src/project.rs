@@ -250,9 +250,15 @@ pub fn bot_from_project(input: Option<&Path>) -> Result<(Bot, ProjectConfig), Co
     let config = ProjectConfig::load(&path)?;
     load_env(&dir)
         .map_err(|e| ConfigError::new("CONFIG_INVALID", format!("Cannot read .env: {e}.")))?;
-    if std::env::var_os("FLUSH_DATA_DIR").is_none() {
-        std::env::set_var("FLUSH_DATA_DIR", config.data_path(&dir));
-    }
+    // One data directory for every store: the environment wins over the config.
+    let data_dir = match std::env::var_os("FLUSH_DATA_DIR").filter(|dir| !dir.is_empty()) {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let dir = config.data_path(&dir);
+            std::env::set_var("FLUSH_DATA_DIR", &dir);
+            dir
+        }
+    };
     let token = std::env::var("FLUXER_BOT_TOKEN").unwrap_or_default();
     if token.trim().is_empty() {
         return Err(ConfigError::new(
@@ -260,8 +266,10 @@ pub fn bot_from_project(input: Option<&Path>) -> Result<(Bot, ProjectConfig), Co
             "FLUXER_BOT_TOKEN is not set. Copy .env.example to .env and fill it in.",
         ));
     }
-    let bot = Bot::new(config.bot_config(&dir, token))
-        .map_err(|e| ConfigError::new("CONFIG_INVALID", e.to_string()))?;
+    let mut bot_config = config.bot_config(&dir, token);
+    bot_config.data_path = Some(data_dir.join("guilds.json"));
+    let bot =
+        Bot::new(bot_config).map_err(|e| ConfigError::new("CONFIG_INVALID", e.to_string()))?;
     Ok((bot, config))
 }
 
