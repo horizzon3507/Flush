@@ -11,8 +11,13 @@
 
 pub mod client;
 pub mod payload;
+pub mod shard;
 pub use client::{gateway_url_with_params, ClientConfig, ConnectError, GatewayClient};
 pub use payload::{
     CloseCode, GatewayError, GatewayPayload, HelloPayload, IdentifyPayload, IdentifyProperties,
     Opcode, PresenceUpdate, ResumePayload,
+};
+pub use shard::{
+    recommended_shard_count, shard_id_for_guild, ShardError, ShardEvent, ShardInfo, ShardManager,
+    ShardManagerOptions, ShardPlan, ShardStatus, DEFAULT_GUILDS_PER_SHARD, MAX_SHARD_COUNT,
 };
