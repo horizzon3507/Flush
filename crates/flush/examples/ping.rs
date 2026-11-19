@@ -107,7 +107,8 @@ impl Command for Warn {
                 return Ok(());
             };
             let Some(mention) = ctx.args.first() else {
-                ctx.reply_no_ping("❌ Usage: `warn <target> [reason]`").await?;
+                ctx.reply_no_ping("❌ Usage: `warn <target> [reason]`")
+                    .await?;
                 return Ok(());
             };
             let reason = ctx

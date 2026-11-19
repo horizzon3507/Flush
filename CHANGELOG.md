@@ -13,6 +13,38 @@ Each release heading is the version and date (`## v0.1.1 · 17/10/2026`); under 
 
 </details>
 
+## v0.2.0 · 19/11/2026
+
+First parity release against `@fluxerjs` 3.3.0 and Yuzuha 0.8.0, and the whole project is now in English. This version was made for the Flush lib on 19/11/2026 (v0.2.0).
+
+- **English everywhere**: docs, comments, log lines, error messages and every string the framework sends to users (cooldown, permission, hierarchy, help and mention replies) are now in English. Bots relying on the Portuguese built-in replies will see the new wording.
+- **REST — full route table**: `Routes` now has all 92 builders of `@fluxerjs/types` 3.3.0, and `RestClient` gained 69 typed methods: webhooks (bot- and token-authenticated, execute, edit/delete message), emojis and stickers (single, bulk, clone, metadata), audit logs, threads (start, active/archived listings, search, members, archive/lock), forum tags, permission overwrites, channel/role positions, member search, guild edit, vanity URL, current-user guilds, leave guild, user profile, application info and message search. `RestClient::raw` reaches anything without a typed method.
+- **Gateway — events**: `DISPATCH_EVENTS` names all 80 dispatch events and 23 more decode into typed `Event` variants (threads, emojis, stickers, invites, webhooks, voice state/server, audit log entries, member chunks, bulk role/channel updates, pins, recipients, reaction clears, user update). `Event::wire_name()` returns the wire name even for `Unknown`.
+- **Core — entities**: `Webhook`, `Emoji`, `Sticker`, `AuditLog`, `VoiceState`, `VoiceServerUpdate`, `Application`, thread metadata/members and forum tags; `Channel` carries thread, forum and voice fields; `ChannelType` and `MessageType` gained the SDK's missing values; CDN helpers for banners, member assets, guild assets, emojis and stickers with the SDK size ladder.
+- **Framework — typed arguments**: `Args` parses user, role and channel mentions, integers, booleans and durations (`1h30m`) with `ArgError` describing what was expected.
+- **Framework — middleware**: `Bot::middleware()` runs `Middleware` before each command; `Guard` and `guild_only` cover the common cases.
+- **Framework — collectors and scheduler**: `Bot::collectors()` awaits messages or reactions with filters and timeouts; `Bot::scheduler()` runs one-shot and interval jobs with cancellation.
+- **Framework — hooks**: `HookEvent::Raw` delivers every gateway event; exhaustive matches on `HookEvent` need a new arm. Thread channels are cached like regular channels.
+- **Breaking**: `MessageType` 99 now decodes as `ClientSystem` instead of `Unknown`; forum and media channels are no longer `is_text_bearing()`.
+- `docs/PARITY.md` lists what matches and what is deferred to follow-up releases (script language, CLI, SQLite store, sharding, voice, music, canvas, attachment uploads).
+
+## v0.1.4 · 19/10/2026
+
+Fixes `INVALID_FORM_BODY` on command replies in DMs (reported by Sourbot). This version was made for the Flush lib on 19/10/2026 (v0.1.4).
+
+- **Core — DM fix**: `MessageReference` no longer serializes `guild_id: null` or `type: 0`. Adam rejects the form when the reference carries a null `guild_id` and a Default `type` (`400 INVALID_FORM_BODY`), which broke every command `reply` in DMs; the fields are now omitted when absent, mirroring `toMessageReference` in the `@fluxerjs` SDK. Guild payloads are unchanged.
+
+## v0.1.3 · 18/10/2026
+
+Critical connection fix for the `wss` gateway. This version was made for the Flush lib on 18/10/2026 (v0.1.3).
+
+- **Gateway — handshake HTTP 400 fix**: `gateway_url_with_params` now guarantees a trailing `/` on the host before appending `?v=1&encoding=json`. With `tungstenite` ≥ 0.30 serializing `path_and_query` raw, a URL without a path (`wss://gateway.fluxer.app?v=1…`) went out as `GET ?v=1&encoding=json HTTP/1.1` and the gateway answered `HTTP 400 Bad Request`, so no bot on the framework could connect. The function also no longer duplicates the slash or params when the URL is already complete.
+- New regression test in `flush-gateway` covering 4 URL shapes (no slash, with slash, full query, partial query); the existing expectation in `protocol.rs` was updated.
+
+## v0.1.1 · 17/10/2026`); under it, a short summary ends with a plain sentence like: “This version was made for the Flush lib on 17/10/2026 (v0.1.1).”
+
+</details>
+
 ## v0.1.4 · 19/10/2026
 
 Fix de `INVALID_FORM_BODY` em respostas de comando via DM (report do Sourbot). This version was made for the Flush lib on 19/10/2026 (v0.1.4).
