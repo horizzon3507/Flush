@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use flush_core::presence::Presence;
 
-/// Opcodes do Gateway principal (registro completo 0-16, 28).
+/// Main Gateway opcodes (full registry 0-16, 28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Opcode {
@@ -52,7 +52,7 @@ impl Opcode {
     }
 }
 
-/// Payload genérico do Gateway: `{ op, d?, s?, t? }`.
+/// Generic Gateway payload: `{ op, d?, s?, t? }`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GatewayPayload {
     pub op: u8,
@@ -126,7 +126,7 @@ pub struct PresenceUpdate {
     pub presence: Presence,
 }
 
-/// Erro de Gateway (op 12, voz).
+/// Gateway error (op 12, voice).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GatewayError {
     pub code: String,
@@ -134,7 +134,7 @@ pub struct GatewayError {
     pub message: String,
 }
 
-/// Close codes 4000-4012 do Gateway.
+/// Gateway close codes 4000-4012.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CloseCode {
     UnknownError,
@@ -171,24 +171,24 @@ impl CloseCode {
         }
     }
 
-    /// Sessão estabelecida ainda pode ser recuperada com Resume?
+    /// Whether an established session can still be recovered with Resume.
     pub fn resumable(&self) -> bool {
         match self {
-            // 4003/4010/4011/4012 nunca criaram/recuperam sessão.
+            // 4003/4010/4011/4012 never created or recover a session.
             Self::NotAuthenticated
             | Self::InvalidShard
             | Self::ShardingRequired
             | Self::InvalidApiVersion => false,
-            // 4007: a tentativa falhou, mas a sessão segue retida até expirar.
+            // 4007: the attempt failed, but the session stays retained until it expires.
             Self::InvalidSequence => true,
             _ => true,
         }
     }
 }
 
-/// Erros locais do payload (não confundir com close codes do servidor).
+/// Local payload errors (not the server's close codes).
 #[derive(Debug, Error)]
 pub enum PayloadError {
-    #[error("payload inválido: {0}")]
+    #[error("invalid payload: {0}")]
     Invalid(String),
 }
