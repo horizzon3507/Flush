@@ -90,6 +90,10 @@ fn options_resolve_explicit_then_env_then_single() {
         Err(ShardError::InvalidCount)
     );
     assert!(ShardingOptions::fixed(2)
+        .leader_shard_id(2)
+        .resolve(None, None)
+        .is_err());
+    assert!(ShardingOptions::fixed(2)
         .leader_shard_id(20_000)
         .validate()
         .is_err());

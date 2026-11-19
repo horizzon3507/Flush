@@ -72,6 +72,14 @@ pub struct ClusterRuntimeInfo {
 pub type RuntimeFuture = Pin<Box<dyn Future<Output = Result<(), CommandError>> + Send>>;
 type Runner = Arc<dyn Fn() -> Result<RuntimeFuture, CommandError> + Send + Sync>;
 
+struct CancelJobs(crate::scheduler::Scheduler);
+
+impl Drop for CancelJobs {
+    fn drop(&mut self) {
+        self.0.cancel_all();
+    }
+}
+
 struct State {
     status: RuntimeStatus,
     last_error: Option<String>,
@@ -115,7 +123,12 @@ impl<M: Clone> Cluster<M> {
     {
         self.add_runner(id, meta, move || {
             let mut bot = build()?;
-            Ok(Box::pin(async move { bot.run().await }) as RuntimeFuture)
+            // Dropped when the runtime ends or is removed: its jobs go with it.
+            let jobs = CancelJobs(bot.scheduler());
+            Ok(Box::pin(async move {
+                let _jobs = jobs;
+                bot.run().await
+            }) as RuntimeFuture)
         })
     }
 
@@ -149,6 +162,9 @@ impl<M: Clone> Cluster<M> {
             status: RuntimeStatus::Running,
             last_error: None,
         }));
+        let _ = self
+            .events_tx
+            .unbounded_send(ClusterEvent::RuntimeAdded { id: id.clone() });
         let (task_state, task_events, task_id) =
             (state.clone(), self.events_tx.clone(), id.clone());
         let task = async_std::task::spawn(async move {
@@ -172,7 +188,7 @@ impl<M: Clone> Cluster<M> {
             }
         });
         self.slots.insert(
-            id.clone(),
+            id,
             Slot {
                 meta,
                 runner,
@@ -180,9 +196,6 @@ impl<M: Clone> Cluster<M> {
                 task: Some(task),
             },
         );
-        let _ = self
-            .events_tx
-            .unbounded_send(ClusterEvent::RuntimeAdded { id });
         Ok(())
     }
 

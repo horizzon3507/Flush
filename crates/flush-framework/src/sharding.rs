@@ -137,7 +137,7 @@ impl ShardingOptions {
             )),
             None => None,
         };
-        match (&self.ids, count) {
+        let plan = match (&self.ids, count) {
             (Some(ids), Some(count)) => ShardPlan::new(ids, count),
             (Some(ids), None) => ShardPlan::from_ids(ids),
             (None, Some(count)) => ShardPlan::all(count),
@@ -145,7 +145,15 @@ impl ShardingOptions {
                 Some(env) => env.plan(),
                 None => ShardPlan::all(1),
             },
+        }?;
+        if self.leader_shard_id >= plan.count() {
+            return Err(ShardError::Invalid(format!(
+                "leader_shard_id {} is outside the {} shard(s)",
+                self.leader_shard_id,
+                plan.count()
+            )));
         }
+        Ok(plan)
     }
 }
 

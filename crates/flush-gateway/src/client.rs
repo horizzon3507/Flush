@@ -155,6 +155,11 @@ impl GatewayClient {
         self.ready
     }
 
+    /// Whether a socket is open and Identify/Resume went out on it.
+    pub fn is_connected(&self) -> bool {
+        self.ws.is_some() && self.handshaken
+    }
+
     /// `(shard_id, shard_count)` sent on Identify, when sharded.
     pub fn shard(&self) -> Option<(u32, u32)> {
         self.config.shard
@@ -171,18 +176,17 @@ impl GatewayClient {
     /// windows without a Dispatch (the caller keeps looping).
     /// Reconnecting with Resume is internal; only token/shard/version errors are fatal.
     pub async fn next_event(&mut self) -> Result<Option<Event>, ConnectError> {
-        loop {
-            if self.ws.is_none() || !self.handshaken {
-                self.connect_once().await?;
-            }
-            match self.step().await? {
-                Step::Event(ev) => return Ok(Some(*ev)),
-                Step::NoEvent => return Ok(None),
-                Step::Reconnect => {
-                    self.ws = None;
-                    self.backoff().await;
-                    continue;
-                }
+        if self.ws.is_none() || !self.handshaken {
+            self.connect_once().await?;
+        }
+        match self.step().await? {
+            Step::Event(ev) => Ok(Some(*ev)),
+            Step::NoEvent => Ok(None),
+            Step::Reconnect => {
+                // Returning lets a supervisor see the drop; the next call reconnects.
+                self.disconnect();
+                self.backoff().await;
+                Ok(None)
             }
         }
     }

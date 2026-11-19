@@ -57,8 +57,8 @@ impl Scheduler {
             async_std::task::sleep(delay).await;
             if !flag.is_cancelled() && !paused.load(Ordering::SeqCst) {
                 job().await;
-                flag.cancel();
             }
+            flag.cancel();
         });
         handle
     }

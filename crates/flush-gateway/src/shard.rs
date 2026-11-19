@@ -4,9 +4,9 @@
 //! Mirrors the shard handling of `@fluxerjs/ws` (`shardIds` / `shardCount`)
 //! and Yuzuha's `shardIdForGuild`.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::future::{select, Either};
@@ -206,6 +206,10 @@ enum ShardCommand {
 
 type Statuses = Arc<Mutex<BTreeMap<u32, ShardStatus>>>;
 
+/// Serializes first Identifies: held from a shard's connection attempt until
+/// it is ready, and remembers when the previous holder let go.
+type IdentifyGate = Arc<futures::lock::Mutex<Option<Instant>>>;
+
 struct ShardHandle {
     commands: UnboundedSender<ShardCommand>,
     task: Option<async_std::task::JoinHandle<()>>,
@@ -217,6 +221,7 @@ pub struct ShardManager {
     shards: BTreeMap<u32, ShardHandle>,
     statuses: Statuses,
     events: UnboundedReceiver<ShardEvent>,
+    pending: VecDeque<ShardEvent>,
 }
 
 impl ShardManager {
@@ -229,7 +234,8 @@ impl ShardManager {
         let (tx, events) = unbounded();
         let statuses: Statuses = Arc::new(Mutex::new(BTreeMap::new()));
         let mut shards = BTreeMap::new();
-        for (index, &id) in plan.ids().iter().enumerate() {
+        let gate: IdentifyGate = Arc::new(futures::lock::Mutex::new(None));
+        for &id in plan.ids() {
             let mut cfg = config.clone();
             cfg.shard = Some((id, plan.count()));
             let client = GatewayClient::new(cfg)?;
@@ -241,7 +247,8 @@ impl ShardManager {
                 cmd_rx,
                 tx.clone(),
                 statuses.clone(),
-                options.identify_delay.saturating_mul(index as u32),
+                gate.clone(),
+                options.identify_delay,
                 options.retry_delay,
             ));
             shards.insert(
@@ -257,6 +264,7 @@ impl ShardManager {
             shards,
             statuses,
             events,
+            pending: VecDeque::new(),
         })
     }
 
@@ -266,6 +274,9 @@ impl ShardManager {
 
     /// Next event from any shard; `None` once every shard has stopped.
     pub async fn next(&mut self) -> Option<ShardEvent> {
+        if let Some(event) = self.pending.pop_front() {
+            return Some(event);
+        }
         self.events.next().await
     }
 
@@ -335,7 +346,12 @@ impl ShardManager {
                 task.cancel().await;
             }
             let mut map = self.statuses.lock().unwrap_or_else(|e| e.into_inner());
-            map.insert(id, ShardStatus::Closed);
+            if map.insert(id, ShardStatus::Closed) != Some(ShardStatus::Closed) {
+                self.pending.push_back(ShardEvent::StatusChanged {
+                    shard_id: id,
+                    status: ShardStatus::Closed,
+                });
+            }
         }
     }
 }
@@ -365,26 +381,50 @@ fn set_status(
     }
 }
 
+fn release(slot: &mut Option<futures::lock::OwnedMutexGuard<Option<Instant>>>) {
+    if let Some(mut guard) = slot.take() {
+        *guard = Some(Instant::now());
+    }
+}
+
 fn retryable(error: &ConnectError) -> bool {
     matches!(error, ConnectError::Ws(_) | ConnectError::BadHello(_))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_shard(
     id: u32,
     mut client: GatewayClient,
     mut commands: UnboundedReceiver<ShardCommand>,
     events: UnboundedSender<ShardEvent>,
     statuses: Statuses,
-    start_delay: Duration,
+    gate: IdentifyGate,
+    identify_delay: Duration,
     retry_delay: Duration,
 ) {
-    if !start_delay.is_zero() {
-        async_std::task::sleep(start_delay).await;
+    // Held until this shard's first Identify is answered (or fails), so the
+    // next shard identifies at least `identify_delay` after that.
+    let mut slot = Some(gate.lock_owned().await);
+    if let Some(Some(last)) = slot.as_deref() {
+        let wait = identify_delay.saturating_sub(last.elapsed());
+        if !wait.is_zero() {
+            async_std::task::sleep(wait).await;
+        }
     }
     set_status(&statuses, &events, id, ShardStatus::Connecting);
     let mut commands_open = true;
     loop {
-        let outcome = if commands_open {
+        let current = statuses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+            .copied();
+        if current == Some(ShardStatus::Ready) && !client.is_connected() {
+            set_status(&statuses, &events, id, ShardStatus::Reconnecting);
+        }
+        // Commands wait for a live session: sending on a missing socket is a
+        // silent no-op, and racing them against the handshake would cancel it.
+        let outcome = if commands_open && client.is_connected() && client.is_ready() {
             let step = Box::pin(client.next_event());
             match select(step, commands.next()).await {
                 Either::Left((result, _)) => Either::Left(result),
@@ -399,6 +439,7 @@ async fn run_shard(
                     Event::Ready(_) | Event::Resumed { .. } => {
                         info!("gateway: shard {id} ready");
                         set_status(&statuses, &events, id, ShardStatus::Ready);
+                        release(&mut slot);
                     }
                     _ => {}
                 }
@@ -415,6 +456,7 @@ async fn run_shard(
                 warn!("gateway: shard {id} dropped ({error}), retrying in {retry_delay:?}");
                 set_status(&statuses, &events, id, ShardStatus::Reconnecting);
                 client.disconnect();
+                release(&mut slot);
                 async_std::task::sleep(retry_delay).await;
             }
             Either::Left(Err(error)) => {

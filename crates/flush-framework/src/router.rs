@@ -251,6 +251,12 @@ impl Bot {
 
     /// Main loop: REST (discovery) → Gateway → dispatch until a fatal error.
     pub async fn run(&mut self) -> Result<(), CommandError> {
+        // Jobs stay off until the shard plan says this process runs them.
+        let may_shard = self.config.sharding.is_some()
+            || !matches!(crate::sharding::ShardEnv::from_env(), Ok(None));
+        if may_shard {
+            self.scheduler.set_paused(true);
+        }
         let rest = RestClient::new(RestConfig {
             token: self.config.token.clone(),
             api_base: self.config.api_base.clone(),
