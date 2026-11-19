@@ -13,21 +13,19 @@ const MAX_BACKUP_BYTES: u64 = 50_000_000;
 
 type Store = Map<String, Value>;
 
-fn read_store(path: &Path) -> Result<Store, CliError> {
-    if path.extension().and_then(|e| e.to_str()) != Some("json") {
-        let sqlite = matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("sqlite" | "db")
-        );
-        return Err(if sqlite {
-            CliError::new(
-                "UNSUPPORTED",
-                "SQLite stores are not available in Flush yet (see docs/PARITY.md).",
-            )
-        } else {
-            CliError::new("DATA_FORMAT", "The store must end in .json.")
-        });
+fn check_extension(path: &Path) -> Result<(), CliError> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("json") => Ok(()),
+        Some("sqlite" | "db") => Err(CliError::new(
+            "UNSUPPORTED",
+            "SQLite stores are not available in Flush yet (see docs/PARITY.md).",
+        )),
+        _ => Err(CliError::new("DATA_FORMAT", "The store must end in .json.")),
     }
+}
+
+fn read_store(path: &Path) -> Result<Store, CliError> {
+    check_extension(path)?;
     if !path.is_file() {
         return Err(CliError::new("DATA_FORMAT", "Pass an existing store file."));
     }
@@ -37,6 +35,22 @@ fn read_store(path: &Path) -> Result<Store, CliError> {
             "STORE_CORRUPT",
             "The store is not a JSON object keyed by guild id.",
         )),
+    }
+}
+
+/// Store to restore over. A `replace` restore is how a deleted or damaged
+/// store is recovered, so there it counts as empty; `merge` needs it readable.
+fn read_restore_target(path: &Path, policy: RestorePolicy) -> Result<Store, CliError> {
+    check_extension(path)?;
+    match read_store(path) {
+        Err(error)
+            if policy == RestorePolicy::Replace
+                && matches!(error.code.as_str(), "DATA_FORMAT" | "STORE_CORRUPT")
+                && !path.is_dir() =>
+        {
+            Ok(Store::new())
+        }
+        other => other,
     }
 }
 
@@ -118,7 +132,10 @@ pub fn data_command(
     apply: bool,
     policy: RestorePolicy,
 ) -> Result<Value, CliError> {
-    let store = read_store(input)?;
+    let store = match operation {
+        DataOperation::Restore => read_restore_target(input, policy)?,
+        _ => read_store(input)?,
+    };
     match operation {
         DataOperation::Stats => Ok(stats(&store, std::fs::metadata(input)?.len())),
         DataOperation::Backup => {
@@ -277,6 +294,37 @@ mod tests {
         .unwrap();
         assert_eq!(applied["dry_run"], false);
         assert_eq!(applied["guilds_after"], 2);
+        let restored: Value =
+            serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
+        assert_eq!(restored, serde_json::from_str::<Value>(CASES).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn replace_restore_recovers_a_missing_or_damaged_store() {
+        let dir = temp("recover");
+        let store = dir.join("cases.json");
+        let backup = dir.join("backup.json");
+        std::fs::write(&store, CASES).unwrap();
+        data_command(
+            DataOperation::Backup,
+            &store,
+            Some(&backup),
+            false,
+            RestorePolicy::Replace,
+        )
+        .unwrap();
+        let restore =
+            |policy| data_command(DataOperation::Restore, &store, Some(&backup), true, policy);
+
+        std::fs::write(&store, "{ truncated").unwrap();
+        assert_eq!(
+            restore(RestorePolicy::Merge).unwrap_err().code,
+            "STORE_CORRUPT"
+        );
+        assert_eq!(restore(RestorePolicy::Replace).unwrap()["guilds_before"], 0);
+        std::fs::remove_file(&store).unwrap();
+        assert_eq!(restore(RestorePolicy::Replace).unwrap()["guilds_after"], 2);
         let restored: Value =
             serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
         assert_eq!(restored, serde_json::from_str::<Value>(CASES).unwrap());
