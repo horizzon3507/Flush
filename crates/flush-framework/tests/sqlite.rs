@@ -267,9 +267,11 @@ fn imports_the_json_stores() {
         },
     );
     let mut cases = CaseStore::new(cases_path.clone());
-    cases.add("g1", CaseType::Warn, "u2", "u1", "one");
-    cases.add("g1", CaseType::Timeout, "u2", "u1", "two");
-    cases.revert_warn("g1", "u2", 1);
+    cases.add("g1", CaseType::Warn, "u2", "u1", "one").unwrap();
+    cases
+        .add("g1", CaseType::Timeout, "u2", "u1", "two")
+        .unwrap();
+    cases.revert_warn("g1", "u2", 1).unwrap();
 
     let store = SqliteStore::open_in_memory().unwrap();
     assert_eq!(store.import_guilds_json(&guilds_path).unwrap(), 1);

@@ -26,6 +26,7 @@ First parity release against `@fluxerjs` 3.3.0 and Yuzuha 0.8.0, and the whole p
 - **Framework — collectors and scheduler**: `Bot::collectors()` awaits messages or reactions with filters and timeouts; `Bot::scheduler()` runs one-shot and interval jobs with cancellation.
 - **Framework — variables and SQLite**: `VariableService` stores JSON values in `global`, `guild` and `user` scopes with TTL, prefix queries and atomic transactions; `SqliteStore` (feature `sqlite`, on by default) keeps variables, cases and guild configuration in one WAL database and imports the JSON stores.
 - **Framework — hooks**: `HookEvent::Raw` delivers every gateway event; exhaustive matches on `HookEvent` need a new arm. Thread channels are cached like regular channels.
+- **Breaking**: `CaseStore::add` and `CaseStore::revert_warn` return `io::Result`, so a case that could not be written is an error instead of an id that was never saved.
 - **Breaking**: `MessageType` 99 now decodes as `ClientSystem` instead of `Unknown`; forum and media channels are no longer `is_text_bearing()`.
 - `docs/PARITY.md` lists what matches and what is deferred to follow-up releases (script language, CLI, sharding, voice, music, canvas, attachment uploads).
 
