@@ -137,7 +137,6 @@ mod tests_url {
     }
 }
 
-
 #[allow(deprecated)]
 type WsStream = async_tungstenite::WebSocketStream<ConnectStream>;
 

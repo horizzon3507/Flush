@@ -11,6 +11,7 @@
 
 pub mod client;
 pub mod error;
+pub mod resources;
 pub mod routes;
 
 pub use client::{
@@ -18,4 +19,8 @@ pub use client::{
     MemberPatch, RestClient, RestConfig,
 };
 pub use error::{ApiErrorBody, RestError};
+pub use resources::{
+    AuditLogQuery, ChannelPosition, GuildPatch, MemberSearch, RolePosition, StickerCreate,
+    StickerPatch, ThreadSearch, UserGuild, VanityUrl, WebhookPatch,
+};
 pub use routes::Routes;

@@ -50,7 +50,7 @@ fn message_null_lists_become_empty() {
 #[test]
 fn message_type_unknown_maps_to_unknown() {
     let mut v = msg_fixture(false);
-    v["type"] = serde_json::json!(99);
+    v["type"] = serde_json::json!(200);
     let m: Message = serde_json::from_value(v).unwrap();
     assert_eq!(m.kind, MessageType::Unknown);
 }
@@ -199,4 +199,110 @@ fn message_send_no_ping_text() {
     assert_eq!(send.content.as_deref(), Some("log"));
     assert!(send.allowed_mentions.as_ref().unwrap().replied_user == Some(false));
     assert!(send.validate().is_ok());
+}
+
+fn dispatch(kind: &str, data: serde_json::Value) -> Event {
+    Event::decode(&DispatchEnvelope {
+        kind: kind.into(),
+        seq: 1,
+        data,
+    })
+}
+
+#[test]
+fn dispatch_table_matches_sdk_size() {
+    assert_eq!(flush_core::DISPATCH_EVENTS.len(), 80);
+    assert!(flush_core::is_known_dispatch("THREAD_LIST_SYNC"));
+    assert!(!flush_core::is_known_dispatch("NOT_AN_EVENT"));
+}
+
+#[test]
+fn thread_events_decode() {
+    let ev = dispatch(
+        "THREAD_CREATE",
+        serde_json::json!({
+            "id": "5", "type": 11, "guild_id": "1", "parent_id": "2", "name": "t",
+            "thread_metadata": { "archived": false, "auto_archive_duration": 1440, "locked": null },
+            "applied_tags": null
+        }),
+    );
+    match ev {
+        Event::ThreadCreate(ch) => {
+            assert!(ch.is_thread());
+            assert_eq!(ch.thread_metadata.unwrap().auto_archive_duration, 1440);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    let ev = dispatch(
+        "THREAD_MEMBERS_UPDATE",
+        serde_json::json!({ "id": "5", "guild_id": "1", "member_count": 3,
+            "added_members": null, "removed_member_ids": ["9"] }),
+    );
+    assert!(matches!(
+        ev,
+        Event::ThreadMembersUpdate { member_count: 3, ref removed_member_ids, .. }
+            if removed_member_ids.len() == 1
+    ));
+}
+
+#[test]
+fn expression_webhook_voice_events_decode() {
+    let ev = dispatch(
+        "GUILD_EMOJIS_UPDATE",
+        serde_json::json!({ "guild_id": "1", "emojis": [{ "id": "7", "name": "ok", "animated": true }] }),
+    );
+    match ev {
+        Event::GuildEmojisUpdate { emojis, .. } => assert_eq!(emojis[0].mention(), "<a:ok:7>"),
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(
+        dispatch(
+            "WEBHOOKS_UPDATE",
+            serde_json::json!({ "guild_id": "1", "channel_id": "2" })
+        )
+        .kind(),
+        "WEBHOOKS_UPDATE"
+    );
+    let ev = dispatch(
+        "VOICE_STATE_UPDATE",
+        serde_json::json!({ "user_id": "3", "channel_id": null, "mute": null, "deaf": false }),
+    );
+    assert!(matches!(ev, Event::VoiceStateUpdate(ref v) if v.channel_id.is_none()));
+    let ev = dispatch(
+        "GUILD_AUDIT_LOG_ENTRY_CREATE",
+        serde_json::json!({ "guild_id": "1", "id": "8", "action_type": 22, "changes": null }),
+    );
+    assert!(matches!(
+        ev,
+        Event::GuildAuditLogEntryCreate { ref entry, .. }
+            if entry.action_type == flush_core::AuditLogAction::MemberBanAdd
+    ));
+}
+
+#[test]
+fn known_but_untyped_event_keeps_raw_payload() {
+    let ev = dispatch("PASSIVE_UPDATES", serde_json::json!({ "x": 1 }));
+    assert_eq!(ev.wire_name(), "PASSIVE_UPDATES");
+    assert!(matches!(ev, Event::Unknown { .. }));
+    let bad = dispatch("THREAD_DELETE", serde_json::json!({}));
+    assert!(matches!(bad, Event::Unknown { .. }));
+}
+
+#[test]
+fn channel_types_and_cdn_follow_sdk() {
+    let ch: flush_core::Channel = serde_json::from_value(
+        serde_json::json!({ "id": "1", "type": 15, "available_tags": null }),
+    )
+    .unwrap();
+    assert!(ch.is_forum_like() && !ch.is_text_bearing());
+    let sf = flush_core::Snowflake(42);
+    assert_eq!(
+        flush_core::emoji_url(sf, false, Some(1)),
+        "https://fluxerusercontent.com/emojis/42.png?size=32"
+    );
+    assert_eq!(
+        flush_core::guild_asset_url(flush_core::GuildAsset::Splash, sf, "h", Some(100)).unwrap(),
+        "https://fluxerusercontent.com/splashes/42/h.png?size=480"
+    );
+    assert_eq!(flush_core::banner_url(sf, "", None), None);
 }

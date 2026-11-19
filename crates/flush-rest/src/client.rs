@@ -262,13 +262,27 @@ impl RestClient {
         h
     }
 
-    async fn request<T: for<'de> Deserialize<'de>>(
+    pub(crate) async fn request<T: for<'de> Deserialize<'de>>(
         &self,
         method: &str,
         path: &str,
         body: Option<serde_json::Value>,
         audit: Option<&str>,
         query: Option<&str>,
+    ) -> Result<T, RestError> {
+        self.request_with(method, path, body, audit, query, true)
+            .await
+    }
+
+    /// `authed: false` skips the bot token, as token-scoped webhook routes require.
+    pub(crate) async fn request_with<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<serde_json::Value>,
+        audit: Option<&str>,
+        query: Option<&str>,
+        authed: bool,
     ) -> Result<T, RestError> {
         let mut attempt = 0u8;
         loop {
@@ -286,8 +300,10 @@ impl RestClient {
                 _ => return Err(RestError::Config(format!("método {method}"))),
             };
             let mut req = req;
-            for (k, v) in self.auth(audit) {
-                req = req.header(k.as_str(), v.as_str());
+            if authed {
+                for (k, v) in self.auth(audit) {
+                    req = req.header(k.as_str(), v.as_str());
+                }
             }
             let req = match &body {
                 Some(b) => req
@@ -341,7 +357,7 @@ impl RestClient {
         }
     }
 
-    async fn request_unit(
+    pub(crate) async fn request_unit(
         &self,
         method: &str,
         path: &str,
