@@ -1,7 +1,7 @@
-//! Comando `help` embutido (auto-lido da lista de comandos do `Bot`).
+//! Built-in `help` command (read from the `Bot`'s command list).
 //!
-//! `Bot::enable_help()` registra o comando e `Bot::refresh_help()` sincroniza
-//! o snapshot (nome, descrição, usage, aliases) antes do loop principal.
+//! `Bot::enable_help()` registers the command and `Bot::refresh_help()` syncs
+//! the snapshot (name, description, usage, aliases) before the main loop.
 
 use std::sync::Mutex;
 
@@ -59,7 +59,7 @@ impl Help {
             lines.push(format!("Aliases: `{}`", c.aliases.join(", ")));
         }
         if let Some(p) = c.required_permission {
-            lines.push(format!("Requer permissão: **{}**", p.label()));
+            lines.push(format!("Requires permission: **{}**", p.label()));
         }
         Some(info_block(
             format!("❓ {name}", name = c.name).as_str(),
@@ -82,9 +82,9 @@ impl Help {
             })
             .collect();
         if lines.is_empty() {
-            return plain_error("Nenhum comando registrado.");
+            return plain_error("No commands registered.");
         }
-        info_block("❓ Meus comandos", &lines)
+        info_block("❓ My commands", &lines)
     }
 }
 
@@ -94,7 +94,7 @@ impl Command for Help {
     }
 
     fn description(&self) -> &str {
-        "Mostra a lista de comandos ou o detalhe de um: help [nome]"
+        "Shows the command list or the details of one: help [name]"
     }
 
     fn usage(&self) -> Option<&str> {
@@ -114,7 +114,7 @@ impl Command for Help {
                     match Self::detail(&list, &ctx.args[0]) {
                         Some(t) => t,
                         None => plain_error(format!(
-                            "Comando `{}` não encontrado. Use `{p}help`.",
+                            "Command `{}` not found. Use `{p}help`.",
                             ctx.args[0],
                             p = ctx.prefix
                         )),
@@ -133,8 +133,8 @@ impl Default for Help {
     }
 }
 
-/// [`Command`] que desacopla o `help` compartilhado entre o registro do
-/// `Bot::enable_help()` e o snapshot sincronizado no `run()`.
+/// [`Command`] that decouples the `help` shared between the
+/// `Bot::enable_help()` registration and the snapshot synced in `run()`.
 pub struct HelpCmd(pub std::sync::Arc<Help>);
 
 impl Command for HelpCmd {

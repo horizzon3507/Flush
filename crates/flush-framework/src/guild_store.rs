@@ -1,7 +1,7 @@
-//! Config por servidor (espelho de `Sour lib/guildConfig.ts`).
+//! Per-server config (mirrors `Sour lib/guildConfig.ts`).
 //!
-//! JSON local com escrita atômica (`guilds.json.<pid>.tmp` + rename),
-//! normalização defensiva e leitura via env (`PREFIX`, `MOD_LOG_CHANNEL_ID`).
+//! Local JSON with atomic writes (`guilds.json.<pid>.tmp` + rename),
+//! defensive normalization and env fallbacks (`PREFIX`, `MOD_LOG_CHANNEL_ID`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -107,7 +107,7 @@ fn default_data_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("data"))
 }
 
-/// Store com cache em memória + escrita atômica (espelho do Sour).
+/// Store with an in-memory cache + atomic writes (mirrors Sour).
 #[derive(Debug)]
 pub struct GuildStore {
     path: PathBuf,
@@ -170,7 +170,7 @@ impl GuildStore {
             }
             self.cache = Some(map);
         }
-        self.cache.as_ref().expect("cache carregado")
+        self.cache.as_ref().expect("cache loaded")
     }
 
     fn save(&mut self, store: &HashMap<String, GuildConfig>) {

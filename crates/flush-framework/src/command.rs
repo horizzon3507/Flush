@@ -1,4 +1,4 @@
-//! Comando + contexto (espelho de `Sour types.ts Command` + `lib/commandReply.ts`).
+//! Command + context (mirrors `Sour types.ts Command` + `lib/commandReply.ts`).
 
 use std::future::Future;
 
@@ -21,8 +21,8 @@ pub enum CommandError {
 
 pub type CommandResult = Result<(), CommandError>;
 
-/// Contexto entregue ao handler: mensagem, args, prefixo, REST, bot id
-/// e snapshots de leitura (guild/canal/membro resolvidos pelo router).
+/// Context handed to the handler: message, args, prefix, REST, bot id
+/// and read snapshots (guild/channel/member resolved by the router).
 pub struct CommandCtx<'a> {
     pub message: &'a Message,
     pub args: Vec<String>,
@@ -72,8 +72,8 @@ impl CommandCtx<'_> {
             .await?)
     }
 
-    /// Resolve um membro a partir de menção, `id` ou `nome!id` via REST.
-    /// 404 vira `Ok(None)` (chamador decide como responder).
+    /// Resolves a member from a mention, `id` or `name!id` via REST.
+    /// A 404 becomes `Ok(None)` (the caller decides how to reply).
     pub async fn target_member(&self, raw: &str) -> Result<Option<MemberUser>, CommandError> {
         let Some(guild) = self.guild_id() else {
             return Ok(None);
@@ -107,8 +107,8 @@ pub trait Command: Send + Sync {
     fn cooldown_ms(&self) -> u64 {
         0
     }
-    /// Permissão exigida do executor. `None` = livre.
-    /// O router checa antes de executar (dono do servidor passa).
+    /// Permission required from the executor. `None` = unrestricted.
+    /// The router checks it before executing (the server owner passes).
     fn required_permission(&self) -> Option<PermissionAction> {
         None
     }
@@ -118,12 +118,12 @@ pub trait Command: Send + Sync {
     ) -> std::pin::Pin<Box<dyn Future<Output = CommandResult> + Send + 'a>>;
 }
 
-/// Erro formatado estilo Sour: `❌ {detalhe}`.
+/// Sour-style error: `❌ {detail}`.
 pub fn plain_error(detail: impl AsRef<str>) -> String {
     format!("❌ {}", detail.as_ref())
 }
 
-/// Bloco info estilo Sour: `**{titulo}**\n-# ╰› {linha}`.
+/// Sour-style info block: `**{title}**\n-# ╰› {line}`.
 pub fn info_block(title: impl AsRef<str>, lines: &[String]) -> String {
     let mut out = format!("**{}**", title.as_ref());
     for l in lines {
@@ -132,7 +132,7 @@ pub fn info_block(title: impl AsRef<str>, lines: &[String]) -> String {
     out
 }
 
-/// Sucesso de moderação estilo Sour: `{icon} {desc}` + Motivo + Case #.
+/// Sour-style moderation success: `{icon} {desc}` + Reason + Case #.
 pub fn mod_success(
     icon: &str,
     description: &str,
@@ -140,7 +140,7 @@ pub fn mod_success(
     case_id: u64,
     extra: Option<&str>,
 ) -> String {
-    let mut out = format!("{icon} {description}\n-# ╰› Motivo: {reason}");
+    let mut out = format!("{icon} {description}\n-# ╰› Reason: {reason}");
     if let Some(e) = extra {
         out.push_str(&format!("\n-# ╰› {e}"));
     }

@@ -1,11 +1,12 @@
-//! flush-framework: roteador de comandos com prefixo sobre Gateway + REST.
+//! flush-framework: prefix command router on Gateway + REST.
 //!
-//! Espelha `Sour events/messageCreate.ts` + `jully Bot.js::handleMessage`:
-//! - ignora bots/self, parse de prefixo (default `!`, por guild via store),
-//!   lookup nome+aliases (case-insensitive), dedup por message.id,
-//!   cooldown por (usuário, comando), aliases, menção-resposta de prefixo.
-//! - `CommandCtx` entrega `rest` + snapshot de leitura (guilds/canals/members
-//!   via eventos) para handlers chamarem `rest.reply(...)` etc.
+//! Mirrors `Sour events/messageCreate.ts` + `jully Bot.js::handleMessage`:
+//! - ignores bots/self, parses the prefix (default `!`, per guild via the store),
+//!   looks up name + aliases (case-insensitive), dedups by message.id,
+//!   cooldown per (user, command), replies with the prefix when mentioned.
+//! - `CommandCtx` carries `rest` + read snapshots (guilds/channels/members
+//!   from events) so handlers can call `rest.reply(...)` etc.
+//! - Typed arguments ([`Args`]), [`Middleware`], [`Collectors`] and a [`Scheduler`].
 pub mod args;
 pub mod cases;
 pub mod collector;

@@ -1,6 +1,6 @@
-//! Parse de comando com prefixo (espelho de `Sour lib/prefixCommand.ts`).
+//! Prefix command parsing (mirrors `Sour lib/prefixCommand.ts`).
 
-/// Resultado de `parse_prefix_body`: nome em minúsculas + args brutos.
+/// Result of `parse_prefix_body`: lowercase name + raw args.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedCommand {
     pub name: String,
@@ -36,7 +36,7 @@ pub fn parse_prefix_body(
     })
 }
 
-/// `findPrefixCommand`: nome ou alias (case-insensitive).
+/// `findPrefixCommand`: name or alias (case-insensitive).
 pub fn find_command<'a, C: CommandDef<'a>>(name: &str, commands: &'a [C]) -> Option<&'a C> {
     let lower = name.to_lowercase();
     commands
@@ -49,11 +49,11 @@ pub trait CommandDef<'a> {
     fn aliases(&self) -> &[String];
 }
 
-/// Resolve alvo `<@123>` / `<@!123>` / id 17-20 dígitos (padrão Sour).
+/// Resolves a target from `<@123>` / `<@!123>` / a 17-20 digit id (Sour convention).
 pub fn parse_mention_or_id(raw: &str) -> Option<String> {
     let t = raw.trim();
     if let Some(id) = t.strip_prefix("<@&") {
-        // Menção de cargo: `<@&id>` — o chamador decide (darcargo exige este formato).
+        // Role mention `<@&id>`: the caller decides (darcargo requires this form).
         return id.strip_suffix('>').map(str::to_owned);
     }
     if let Some(rest) = t.strip_prefix("<@") {
@@ -70,7 +70,7 @@ fn valid_id(s: &str) -> bool {
     (17..=20).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// Parse de args estilo Jully: `"aspas"`, `'aspas'`, `--flag valor`/`--flag`.
+/// Jully-style arg parsing: `"quotes"`, `'quotes'`, `--flag value`/`--flag`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RichArgs {
     pub args: Vec<String>,
@@ -157,8 +157,8 @@ mod tests {
 
     #[test]
     fn rich_args_quotes_and_flags() {
-        let r = parse_rich_args(r#"say "ola mundo" --tempo 5 --x"#);
-        assert_eq!(r.args, ["say", "ola mundo"]);
+        let r = parse_rich_args(r#"say "hello world" --time 5 --x"#);
+        assert_eq!(r.args, ["say", "hello world"]);
         assert_eq!(
             r.flags,
             [
