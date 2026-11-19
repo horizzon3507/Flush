@@ -71,6 +71,8 @@ Deferred; mostly user-account events a bot token does not receive:
 | Middleware | `Middleware`, `Guard`, `guild_only` |
 | Collectors | `Collectors` (messages and reactions) |
 | Scheduler | `Scheduler` (`after`, `every`, cancellation) |
+| SQLite store (WAL, `BEGIN IMMEDIATE`, normalized tables, private file mode, schema guard) | `SqliteStore` (feature `sqlite`, on by default): variables, cases, guild configuration, import from the JSON stores |
+| Variable service: `global`/`guild`/`user` scopes, TTL, `update`, `expire`, `ttl`, prefix queries with a cursor, atomic transactions, data operations (max 100) | `VariableService`, `VariableTransaction`, `execute_operations`, over `SqliteStore` or `MemoryVariableStore` |
 
 ### Deferred
 
@@ -78,8 +80,10 @@ Each of these is a follow-up of its own:
 
 1. **Function-mode scripting language** and its ~459 built-in functions.
 2. **CLI** (project scaffolding, config loading, run/reload lifecycle).
-3. **SQLite store** (Flush persists `GuildStore`/`CaseStore` as JSON only),
-   plus Yuzuha's variable service on top of it.
+3. **SQLite leftovers**: persisted schedules and schedule history (Flush
+   scheduler jobs are in-memory closures, so there is nothing to store yet),
+   and `Bot` itself still reads the per-guild prefix from the JSON
+   `GuildStore`; `SqliteStore` is used from commands.
 4. **Sharding and cluster runtime** (Flush opens a single gateway connection).
 5. **Voice runtime** (Flush decodes voice state/server events but opens no
    voice connection).

@@ -16,3 +16,19 @@ thiserror.workspace = true
 async-std.workspace = true
 futures.workspace = true
 log.workspace = true
+rusqlite = { workspace = true, optional = true }
+
+[features]
+default = ["sqlite"]
+sqlite = ["dep:rusqlite"]
+
+[dev-dependencies]
+rusqlite.workspace = true
+
+[[test]]
+name = "sqlite"
+required-features = ["sqlite"]
+
+[[test]]
+name = "variables"
+required-features = ["sqlite"]

@@ -44,13 +44,36 @@ struct GuildCases {
     cases: Vec<ModCase>,
 }
 
+impl CaseType {
+    /// Lowercase wire name, as stored in JSON and SQLite.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Warn => "warn",
+            Self::Unwarn => "unwarn",
+            Self::Kick => "kick",
+            Self::Ban => "ban",
+            Self::Unban => "unban",
+            Self::Softban => "softban",
+            Self::Timeout => "timeout",
+            Self::Untimeout => "untimeout",
+            Self::Clear => "clear",
+            Self::Lock => "lock",
+            Self::Unlock => "unlock",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
+    }
+}
+
 impl GuildCases {
     fn next(&self) -> u64 {
         self.next_id.max(1)
     }
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
