@@ -8,7 +8,7 @@
 
 ```bash
 cargo check --workspace --all-targets
-cargo test --workspace          # 56 tests, no network
+cargo test --workspace          # 57 tests, no network
 cargo clippy --workspace --all-targets   # must stay at zero warnings
 FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping   # connects for real
 ```

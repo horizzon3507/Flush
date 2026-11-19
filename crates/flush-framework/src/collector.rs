@@ -27,7 +27,7 @@ struct Waiter<T> {
 }
 
 struct Registry<T> {
-    waiters: Mutex<Vec<Waiter<T>>>,
+    waiters: Mutex<Vec<Arc<Waiter<T>>>>,
 }
 
 impl<T: Clone> Registry<T> {
@@ -41,31 +41,31 @@ impl<T: Clone> Registry<T> {
         let (tx, rx) = unbounded();
         let mut waiters = self.waiters.lock().unwrap_or_else(|e| e.into_inner());
         waiters.retain(|w| !w.tx.is_closed());
-        waiters.push(Waiter { filter, tx });
+        waiters.push(Arc::new(Waiter { filter, tx }));
         rx
     }
 
     fn offer(&self, item: &T) {
-        // Filters run without the lock held, so they may use the registry.
-        let current = {
-            let mut waiters = self.waiters.lock().unwrap_or_else(|e| e.into_inner());
-            std::mem::take(&mut *waiters)
+        // Filters run on a snapshot, without the lock held, so they may use
+        // the registry and overlapping offers still reach every waiter.
+        let snapshot: Vec<Arc<Waiter<T>>> = {
+            let waiters = self.waiters.lock().unwrap_or_else(|e| e.into_inner());
+            waiters.clone()
         };
-        let mut kept: Vec<Waiter<T>> = current
+        let dead: Vec<Arc<Waiter<T>>> = snapshot
             .into_iter()
             .filter(|w| {
                 if w.tx.is_closed() {
-                    return false;
+                    return true;
                 }
-                if (w.filter)(item) {
-                    return w.tx.try_send(item.clone()).is_ok();
-                }
-                true
+                (w.filter)(item) && w.tx.try_send(item.clone()).is_err()
             })
             .collect();
+        if dead.is_empty() {
+            return;
+        }
         let mut waiters = self.waiters.lock().unwrap_or_else(|e| e.into_inner());
-        kept.append(&mut waiters);
-        *waiters = kept;
+        waiters.retain(|w| !dead.iter().any(|d| Arc::ptr_eq(d, w)));
     }
 
     fn len(&self) -> usize {
@@ -219,6 +219,23 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner())
             .len();
         assert_eq!(registered, 1);
+    }
+
+    #[async_std::test]
+    async fn offer_inside_a_filter_still_reaches_other_collectors() {
+        let collectors = Collectors::new();
+        let inner = collectors.clone();
+        // Stands in for an overlapping offer: it runs while the first is mid-flight.
+        let _nested = collectors.reactions(move |r| {
+            if r.message_id == Snowflake(5) {
+                inner.offer_reaction(&reaction(6, 9));
+            }
+            false
+        });
+        let on_six = collectors.reactions_on(Snowflake(6));
+        collectors.offer_reaction(&reaction(5, 1));
+        let got = on_six.next(Duration::from_millis(20)).await;
+        assert_eq!(got.map(|r| r.user_id), Some(Snowflake(9)));
     }
 
     #[async_std::test]
