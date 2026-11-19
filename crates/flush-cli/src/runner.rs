@@ -212,11 +212,15 @@ pub fn run(input: Option<&Path>) -> Result<i32, CliError> {
 
 /// Development run: debug build, restart on source, config or `.env` changes.
 pub fn dev(input: Option<&Path>) -> Result<i32, CliError> {
-    let mut project = prepare(input)?;
+    let config_path = find_config(input)?;
+    let dir = config_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    // Taken before `.env` is read and the build starts, so an edit made
+    // while the first build runs still triggers a reload.
+    let mut seen = snapshot(&dir, &config_path);
+    let mut project = prepare(Some(&config_path))?;
     let executable = build(&project.dir, false)?;
     let stopping = signals()?;
     let mut child = Some(spawn(&executable, &project)?);
-    let mut seen = snapshot(&project.dir, &project.config_path);
     eprintln!("flush dev: watching {} for changes.", project.dir.display());
     loop {
         if stopping.load(Ordering::Relaxed) {
