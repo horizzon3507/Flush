@@ -1,7 +1,8 @@
-//! Rotas `/v1` usadas pelo Flush.
+//! `/v1` routes used by Flush.
 //!
-//! Espelho de `Routes` do `@fluxerjs/types` (subset de bots):
-//! canais, mensagens, guilds, membros, roles, bans, users, gateway.
+//! Mirrors `Routes` in `@fluxerjs/types` 3.3.0:
+//! channels, messages, threads, guilds, members, roles, bans, webhooks,
+//! expressions, users, applications, gateway.
 
 use flush_core::Snowflake;
 
@@ -69,7 +70,7 @@ impl Routes {
         )
     }
 
-    /// `emoji` já URL-encodado (`ReactionEmoji::encoded()`).
+    /// `emoji` already URL-encoded (`ReactionEmoji::encoded()`).
     pub fn channel_reaction(channel: Snowflake, message: Snowflake, emoji: &str) -> String {
         format!(
             "/channels/{}/messages/{}/reactions/{emoji}",

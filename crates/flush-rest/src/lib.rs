@@ -1,12 +1,12 @@
-//! flush-rest: cliente REST `/v1` do Fluxer sobre surf.
+//! flush-rest: Fluxer `/v1` REST client on surf.
 //!
-//! Contratos (docs oficiais + uso real do Sour/Jully):
-//! - Base via `GET /.well-known/fluxer` -> `endpoints.api_public`
-//!   (fallback `https://api.fluxer.app`); rotas sempre sob `/v1`.
-//! - Auth de bot: `Authorization: Bot <token>`.
-//! - `429 RATE_LIMITED`: respeita `Retry-After` e repete uma vez.
-//! - Rotas cobertas: mensagens (CRUD, bulk-delete 2-100, typing),
-//!   membros (get/list/patch/kick/roles), bans (put/delete/list),
+//! Contracts (official docs + real Sour/Jully usage):
+//! - Base URL via `GET /.well-known/fluxer` -> `endpoints.api_public`
+//!   (fallback `https://api.fluxer.app`); routes always under `/v1`.
+//! - Bot auth: `Authorization: Bot <token>`.
+//! - `429 RATE_LIMITED`: honors `Retry-After` and retries once.
+//! - Covered routes: messages (CRUD, bulk-delete 2-100, typing),
+//!   members (get/list/patch/kick/roles), bans (put/delete/list),
 //!   roles (list), users (get), guild (get), gateway bot info.
 
 pub mod client;

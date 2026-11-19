@@ -1,15 +1,15 @@
-//! Cliente REST `/v1` sobre surf (async-std + h1/rustls).
+//! `/v1` REST client on surf (async-std + h1/rustls).
 //!
-//! Uso real espelhado:
+//! Real-world usage it mirrors:
 //! - Jully `Bot.js::apiRequest`: `Authorization: Bot <token>`, JSON,
-//!   retry em 429 via `Retry-After`, retry de rede 3x com backoff.
-//! - Sour `@fluxerjs/core`: reply via `POST /channels/{id}/messages` com
+//!   retry on 429 via `Retry-After`, 3 network retries with backoff.
+//! - Sour `@fluxerjs/core`: reply via `POST /channels/{id}/messages` with
 //!   `message_reference {channel_id, message_id, guild_id?}`;
-//!   `bulkDelete(n)` = lista recentes + DELETE único ou POST bulk-delete;
-//!   ban = `PUT /guilds/{g}/bans/{u}` com `reason/delete_message_days`;
-//!   timeout = `PATCH /guilds/{g}/members/{u}` com
+//!   `bulkDelete(n)` = list recent + single DELETE or POST bulk-delete;
+//!   ban = `PUT /guilds/{g}/bans/{u}` with `reason/delete_message_days`;
+//!   timeout = `PATCH /guilds/{g}/members/{u}` with
 //!   `communication_disabled_until/timeout_reason`;
-//!   roles via `GET /guilds/{g}/roles` (sem GET individual confiável).
+//!   roles via `GET /guilds/{g}/roles` (no reliable single-role GET).
 
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
@@ -29,11 +29,11 @@ const DEFAULT_GATEWAY: &str = "wss://gateway.fluxer.app";
 #[derive(Debug, Clone)]
 pub struct RestConfig {
     pub token: String,
-    /// Base da API pública (ex.: `https://api.fluxer.app`). Se ausente, usa discovery.
+    /// Public API base (e.g. `https://api.fluxer.app`). Discovery is used when absent.
     pub api_base: Option<String>,
-    /// Origem para discovery (`GET /.well-known/fluxer`). Padrão fluxer.app.
+    /// Origin for discovery (`GET /.well-known/fluxer`). Defaults to fluxer.app.
     pub origin: Option<String>,
-    /// Gateway explícito (pula discovery do gateway).
+    /// Explicit gateway URL (skips gateway discovery).
     pub gateway_url: Option<String>,
     pub audit_reason: Option<String>,
 }
@@ -185,7 +185,7 @@ pub struct RestClient {
 impl RestClient {
     pub async fn new(config: RestConfig) -> Result<Self, RestError> {
         if config.token.trim().is_empty() {
-            return Err(RestError::Config("token vazio".into()));
+            return Err(RestError::Config("empty token".into()));
         }
         let (api_base, gateway_url) = if let Some(base) = config.api_base.clone() {
             let gw = config
@@ -204,7 +204,7 @@ impl RestClient {
                     (ep.api_public, gw)
                 }
                 Err(e) => {
-                    warn!("rest: discovery falhou em {origin} ({e}), usando defaults");
+                    warn!("rest: discovery failed at {origin} ({e}), using defaults");
                     (
                         DEFAULT_API_BASE.to_owned(),
                         config
@@ -242,7 +242,7 @@ impl RestClient {
         let _ = &mut doc;
         let ep = doc
             .endpoints
-            .ok_or_else(|| RestError::BadResponse("sem endpoints".into()))?;
+            .ok_or_else(|| RestError::BadResponse("no endpoints".into()))?;
         Ok(InstanceEndpoints {
             api_public: ep.api_public.unwrap_or_else(|| DEFAULT_API_BASE.into()),
             gateway: ep.gateway.unwrap_or_else(|| DEFAULT_GATEWAY.into()),
@@ -297,7 +297,7 @@ impl RestClient {
                 "PUT" => self.http.put(&url),
                 "PATCH" => self.http.patch(&url),
                 "DELETE" => self.http.delete(&url),
-                _ => return Err(RestError::Config(format!("método {method}"))),
+                _ => return Err(RestError::Config(format!("unsupported method {method}"))),
             };
             let mut req = req;
             if authed {
@@ -308,7 +308,7 @@ impl RestClient {
             let req = match &body {
                 Some(b) => req
                     .body_json(b)
-                    .map_err(|e| RestError::Transport(format!("serializar body: {e}")))?,
+                    .map_err(|e| RestError::Transport(format!("serialize body: {e}")))?,
                 None => req,
             };
             let mut resp = req.await.map_err(|e| RestError::Transport(e.to_string()))?;
@@ -316,7 +316,7 @@ impl RestClient {
             if status == 429 {
                 let retry = retry_after(&resp).unwrap_or(1);
                 if attempt == 0 {
-                    warn!("rest: 429 em {method} {path}, retry em {retry}s");
+                    warn!("rest: 429 on {method} {path}, retrying in {retry}s");
                     async_std::task::sleep(std::time::Duration::from_secs(retry)).await;
                     attempt += 1;
                     continue;
@@ -410,7 +410,7 @@ impl RestClient {
         guild: Snowflake,
         role_id: Snowflake,
     ) -> Result<Option<Role>, RestError> {
-        // Sem GET individual confiável: lista e acha pelo ID (padrão do Sour).
+        // No reliable single-role GET: list and find by ID (what Sour does).
         let roles: Vec<Role> = self.roles(guild).await?;
         Ok(roles.into_iter().find(|r| r.id == role_id))
     }
@@ -443,7 +443,7 @@ impl RestClient {
     }
 
     pub async fn all_members(&self, guild: Snowflake) -> Result<Vec<MemberUser>, RestError> {
-        // Paginação `after` (padrão do Sour `darcargo`, lote 1000).
+        // `after` pagination (Sour's `darcargo` pattern, batches of 1000).
         let mut out = Vec::new();
         let mut after = None;
         loop {
@@ -625,7 +625,7 @@ impl RestClient {
         mut payload: MessageSend,
         ping: bool,
     ) -> Result<Message, RestError> {
-        // Espelha `replyToMessage` do SDK: reference + allowed_mentions.replied_user.
+        // Mirrors the SDK's `replyToMessage`: reference + allowed_mentions.replied_user.
         if payload.message_reference.is_none() {
             payload.message_reference = Some(flush_core::MessageReference {
                 channel_id: channel,
@@ -690,7 +690,7 @@ impl RestClient {
         .await
     }
 
-    /// `bulkDelete` do SDK: 1 id = DELETE único; 2-100 = POST bulk-delete.
+    /// The SDK's `bulkDelete`: 1 id = single DELETE; 2-100 = POST bulk-delete.
     pub async fn bulk_delete(
         &self,
         channel: Snowflake,
@@ -722,7 +722,7 @@ impl RestClient {
         Ok(ids.to_vec())
     }
 
-    /// Apaga as N recentes (padrão do `!clear`): lista + bulk-delete.
+    /// Deletes the N most recent messages (the `!clear` pattern): list + bulk-delete.
     pub async fn bulk_delete_recent(
         &self,
         channel: Snowflake,
@@ -752,7 +752,7 @@ impl RestClient {
         .await
     }
 
-    /// Remove a própria reação (`DELETE .../reactions/{emoji}/@me`).
+    /// Removes the bot's own reaction (`DELETE .../reactions/{emoji}/@me`).
     pub async fn remove_own_reaction(
         &self,
         channel: Snowflake,
@@ -768,7 +768,7 @@ impl RestClient {
         .await
     }
 
-    /// Remove a reação de um usuário específico (precisa MANAGE_MESSAGES).
+    /// Removes one user's reaction (needs MANAGE_MESSAGES).
     pub async fn remove_reaction(
         &self,
         channel: Snowflake,
@@ -786,7 +786,7 @@ impl RestClient {
         .await
     }
 
-    /// Limpa todas as reações da mensagem (precisa MANAGE_MESSAGES).
+    /// Clears every reaction on the message (needs MANAGE_MESSAGES).
     pub async fn clear_reactions(
         &self,
         channel: Snowflake,
@@ -964,14 +964,14 @@ impl RestClient {
             .await
     }
 
-    /// Abre (cria no primeiro contato) um canal de DM com o usuário.
+    /// Opens a DM channel with the user (created on first contact).
     pub async fn create_dm(&self, user: Snowflake) -> Result<Channel, RestError> {
         let body = serde_json::json!({ "recipient_id": user.to_string() });
         self.request("POST", Routes::dm_channels(), Some(body), None, None)
             .await
     }
 
-    /// Apelido do membro (`None` remove). Usa PATCH member com `nick`.
+    /// Member nickname (`None` clears it). Uses PATCH member with `nick`.
     pub async fn set_nick(
         &self,
         guild: Snowflake,
@@ -987,7 +987,7 @@ impl RestClient {
     }
 
     pub async fn typing(&self, channel: Snowflake) -> Result<(), RestError> {
-        // Erro de typing nunca deve quebrar comando (padrão Jully/Sour).
+        // A typing error must never break a command (Jully/Sour convention).
         match self
             .request::<serde_json::Value>(
                 "POST",
