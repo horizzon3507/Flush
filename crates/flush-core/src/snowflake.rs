@@ -108,7 +108,7 @@ impl<'de> Deserialize<'de> for Snowflake {
         impl Visitor<'_> for V {
             type Value = Snowflake;
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("snowflake como string decimal ou inteiro")
+                f.write_str("a snowflake as a decimal string or integer")
             }
             fn visit_str<E: de::Error>(self, v: &str) -> Result<Snowflake, E> {
                 v.parse().map_err(E::custom)
