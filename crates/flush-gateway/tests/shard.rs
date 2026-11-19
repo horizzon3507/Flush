@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_std::net::{TcpListener, TcpStream};
 use async_tungstenite::tungstenite::Message;
@@ -242,4 +242,164 @@ async fn invalid_shard_close_is_fatal() {
     }
     assert_eq!(manager.status(0), Some(ShardStatus::Closed));
     assert!(manager.next().await.is_none());
+}
+
+/// A gateway whose first connection is slow to say Hello, and which asks the
+/// client to reconnect (op 7) when it receives a presence update, if `kick`.
+async fn slow_gateway(first_hello_delay: Duration, kick: bool) -> (String, Timeline) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let timeline: Timeline = Arc::new(Mutex::new(Vec::new()));
+    let log = timeline.clone();
+    async_std::task::spawn(async move {
+        let mut first = true;
+        while let Ok((stream, _)) = listener.accept().await {
+            let delay = if first {
+                first_hello_delay
+            } else {
+                Duration::ZERO
+            };
+            first = false;
+            async_std::task::spawn(serve_slow(stream, log.clone(), delay, kick));
+        }
+    });
+    (url, timeline)
+}
+
+/// `(op, when)` per client frame, heartbeats left out.
+type Timeline = Arc<Mutex<Vec<(u64, Instant)>>>;
+
+async fn serve_slow(stream: TcpStream, timeline: Timeline, hello_delay: Duration, kick: bool) {
+    let mut ws = async_tungstenite::accept_async(stream).await.unwrap();
+    async_std::task::sleep(hello_delay).await;
+    let hello = json!({"op": 10, "d": {"heartbeat_interval": 45_000}});
+    if ws
+        .send(Message::Text(hello.to_string().into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    while let Some(Ok(Message::Text(text))) = ws.next().await {
+        let frame: Value = serde_json::from_str(&text).unwrap();
+        let op = frame["op"].as_u64().unwrap();
+        if op == 1 {
+            continue;
+        }
+        timeline.lock().unwrap().push((op, Instant::now()));
+        let reply = match op {
+            2 => json!({"op": 0, "t": "READY", "s": 1, "d": {"session_id": "s", "guilds": []}}),
+            6 => json!({"op": 0, "t": "RESUMED", "s": 2, "d": {}}),
+            3 if kick => json!({"op": 7, "d": null}),
+            _ => continue,
+        };
+        if ws
+            .send(Message::Text(reply.to_string().into()))
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+}
+
+fn times(timeline: &Timeline, op: u64) -> Vec<Instant> {
+    let seen = timeline.lock().unwrap();
+    seen.iter()
+        .filter(|(o, _)| *o == op)
+        .map(|(_, t)| *t)
+        .collect()
+}
+
+async fn until_ready(manager: &mut ShardManager, shards: usize) {
+    let mut ready = 0;
+    while ready < shards {
+        if let ShardEvent::Dispatch { event, .. } = next(manager).await {
+            if matches!(*event, Event::Ready(_)) {
+                ready += 1;
+            }
+        }
+    }
+}
+
+#[async_std::test]
+async fn identifies_stay_spaced_when_a_handshake_is_slow() {
+    let gap = Duration::from_millis(150);
+    // The first connection's Hello arrives after the second shard would have
+    // started under a fixed per-index delay.
+    let (url, timeline) = slow_gateway(Duration::from_millis(250), false).await;
+    let plan = ShardPlan::all(3).unwrap();
+    let options = ShardManagerOptions {
+        identify_delay: gap,
+        retry_delay: Duration::from_millis(20),
+    };
+    let mut manager = ShardManager::spawn(ClientConfig::new("token", url), plan, options).unwrap();
+    until_ready(&mut manager, 3).await;
+    let identifies = times(&timeline, 2);
+    assert_eq!(identifies.len(), 3);
+    for pair in identifies.windows(2) {
+        let spacing = pair[1].duration_since(pair[0]);
+        assert!(spacing >= gap, "identifies only {spacing:?} apart");
+    }
+    manager.shutdown().await;
+}
+
+#[async_std::test]
+async fn commands_sent_before_the_connection_are_delivered() {
+    let (url, timeline) = slow_gateway(Duration::from_millis(150), false).await;
+    let plan = ShardPlan::all(1).unwrap();
+    let mut manager =
+        ShardManager::spawn(ClientConfig::new("token", url), plan, options()).unwrap();
+    // Queued while the shard is still waiting for Hello.
+    manager.set_presence(&Presence {
+        status: PresenceStatus::Idle,
+        ..Default::default()
+    });
+    manager
+        .request_guild_members(Snowflake::new(1 << 22), "", 10)
+        .unwrap();
+    until_ready(&mut manager, 1).await;
+    for _ in 0..300 {
+        if !times(&timeline, 3).is_empty() && !times(&timeline, 8).is_empty() {
+            break;
+        }
+        async_std::task::sleep(Duration::from_millis(10)).await;
+    }
+    let identify = times(&timeline, 2)[0];
+    assert!(times(&timeline, 3)[0] > identify);
+    assert!(times(&timeline, 8)[0] > identify);
+    manager.shutdown().await;
+}
+
+#[async_std::test]
+async fn server_reconnect_and_shutdown_report_status_changes() {
+    let (url, _timeline) = slow_gateway(Duration::ZERO, true).await;
+    let plan = ShardPlan::all(1).unwrap();
+    let mut manager =
+        ShardManager::spawn(ClientConfig::new("token", url), plan, options()).unwrap();
+    until_ready(&mut manager, 1).await;
+    // The fake gateway answers a presence update with op 7 (Reconnect).
+    manager.set_presence(&Presence::default());
+    let mut statuses = Vec::new();
+    loop {
+        match next(&mut manager).await {
+            ShardEvent::StatusChanged { status, .. } => statuses.push(status),
+            ShardEvent::Dispatch { event, .. } if matches!(*event, Event::Resumed { .. }) => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        statuses,
+        vec![ShardStatus::Reconnecting, ShardStatus::Ready]
+    );
+
+    manager.shutdown().await;
+    let mut closed = false;
+    while let Some(event) = manager.next().await {
+        if let ShardEvent::StatusChanged { shard_id, status } = event {
+            assert_eq!((shard_id, status), (0, ShardStatus::Closed));
+            closed = true;
+        }
+    }
+    assert!(closed, "shutdown emitted no Closed status");
 }

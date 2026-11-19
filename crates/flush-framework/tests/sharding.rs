@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use flush_core::Snowflake;
 use flush_framework::{
-    should_start_sharded_jobs, BotShard, Cluster, ClusterError, ClusterEvent, CommandError,
-    RuntimeFuture, RuntimeStatus, Scheduler, ShardEnv, ShardSchedulerMode, ShardingOptions,
+    should_start_sharded_jobs, Bot, BotConfig, BotShard, Cluster, ClusterError, ClusterEvent,
+    CommandError, RuntimeFuture, RuntimeStatus, Scheduler, ShardEnv, ShardSchedulerMode,
+    ShardingOptions,
 };
 use flush_gateway::{ShardError, ShardPlan};
 
@@ -234,11 +235,20 @@ async fn cluster_reports_failures_and_start_errors() {
 
     let mut seen_error = false;
     let mut seen_stop = false;
+    let mut added = Vec::new();
     while !(seen_error && seen_stop) {
         let event = async_std::future::timeout(Duration::from_secs(5), cluster.next_event())
             .await
             .unwrap()
             .unwrap();
+        // A runtime that finishes at once is still announced before it ends.
+        match &event {
+            ClusterEvent::RuntimeAdded { id } => added.push(id.clone()),
+            ClusterEvent::RuntimeError { id, .. } | ClusterEvent::RuntimeStopped { id } => {
+                assert!(added.contains(id), "{id} ended before RuntimeAdded");
+            }
+            _ => {}
+        }
         match event {
             ClusterEvent::RuntimeError { id, message } => {
                 assert_eq!(id, "crashy");
@@ -258,4 +268,98 @@ async fn cluster_reports_failures_and_start_errors() {
     assert_eq!(cluster.get("done").unwrap().status, RuntimeStatus::Stopped);
     cluster.destroy().await;
     assert!(cluster.is_empty());
+}
+
+#[async_std::test]
+async fn skipped_one_shot_job_is_not_counted_as_active() {
+    let scheduler = Scheduler::new();
+    scheduler.set_paused(true);
+    let handle = scheduler.after(Duration::from_millis(10), || async {});
+    assert_eq!(scheduler.active(), 1);
+    async_std::task::sleep(Duration::from_millis(80)).await;
+    assert_eq!(scheduler.active(), 0);
+    assert!(handle.is_cancelled());
+}
+
+/// An API endpoint that accepts connections and never answers, so `Bot::run`
+/// stays in its REST startup.
+async fn silent_api() -> String {
+    let listener = async_std::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    async_std::task::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    base
+}
+
+fn counting_job(scheduler: &Scheduler) -> Arc<AtomicU32> {
+    let count = Arc::new(AtomicU32::new(0));
+    let c = count.clone();
+    scheduler.every(Duration::from_millis(10), move || {
+        let c = c.clone();
+        async move {
+            c.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    count
+}
+
+fn bot_config(api_base: &str, name: &str) -> BotConfig {
+    let data = std::env::temp_dir().join(format!("flush-{name}-{}.json", std::process::id()));
+    let mut config = BotConfig::new("token");
+    config.api_base = Some(api_base.to_owned());
+    config.gateway_url = Some("ws://127.0.0.1:1".into());
+    config.data_path = Some(data);
+    config
+}
+
+#[async_std::test]
+async fn follower_jobs_stay_off_while_the_bot_starts() {
+    let api = silent_api().await;
+    let mut config = bot_config(&api, "follower");
+    config.sharding = Some(ShardingOptions::subset([1], 2));
+    let mut bot = Bot::new(config).unwrap();
+    let count = counting_job(&bot.scheduler());
+    let run = async_std::task::spawn(async move { bot.run().await });
+    async_std::task::sleep(Duration::from_millis(150)).await;
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    run.cancel().await;
+}
+
+#[async_std::test]
+async fn removing_a_cluster_bot_cancels_its_jobs() {
+    let api = silent_api().await;
+    let config = bot_config(&api, "cluster");
+    let counts: Arc<std::sync::Mutex<Vec<Arc<AtomicU32>>>> = Arc::default();
+    let built = counts.clone();
+    let mut cluster: Cluster = Cluster::new();
+    cluster
+        .add("main", (), move || {
+            let bot = Bot::new(config.clone())?;
+            built.lock().unwrap().push(counting_job(&bot.scheduler()));
+            Ok(bot)
+        })
+        .unwrap();
+    let first = counts.lock().unwrap()[0].clone();
+    async_std::task::sleep(Duration::from_millis(100)).await;
+    assert!(first.load(Ordering::SeqCst) >= 1);
+
+    // A restart must not leave the previous bot's jobs running beside the new ones.
+    cluster.restart("main").await.unwrap();
+    async_std::task::sleep(Duration::from_millis(30)).await;
+    let frozen = first.load(Ordering::SeqCst);
+    async_std::task::sleep(Duration::from_millis(100)).await;
+    assert_eq!(first.load(Ordering::SeqCst), frozen);
+
+    let second = counts.lock().unwrap()[1].clone();
+    assert!(cluster.remove("main").await);
+    async_std::task::sleep(Duration::from_millis(30)).await;
+    let frozen = second.load(Ordering::SeqCst);
+    async_std::task::sleep(Duration::from_millis(100)).await;
+    assert_eq!(second.load(Ordering::SeqCst), frozen);
 }
