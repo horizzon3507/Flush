@@ -197,6 +197,33 @@ pub struct MessageSend {
     pub nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flags: Option<u64>,
+    /// Attachment metadata: one entry per multipart file (matched by `id`),
+    /// or per pre-uploaded file when `upload_filename` is set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentRef>,
+}
+
+/// Attachment entry of a send payload.
+///
+/// With `upload_filename` set it references a file already uploaded through
+/// the attachment upload plan; otherwise it describes `files[id]` of a
+/// multipart request.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentRef {
+    pub id: u64,
+    pub filename: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_filename: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
 }
 
 impl MessageSend {
@@ -218,9 +245,9 @@ impl MessageSend {
 
     pub fn validate(&self) -> Result<(), crate::error::CoreError> {
         let empty_content = self.content.as_ref().map(|s| s.is_empty()).unwrap_or(true);
-        if empty_content && self.embeds.is_empty() {
+        if empty_content && self.embeds.is_empty() && self.attachments.is_empty() {
             return Err(crate::error::CoreError::InvalidMessage(
-                "empty content and no embeds".into(),
+                "empty content, no embeds and no attachments".into(),
             ));
         }
         for e in &self.embeds {

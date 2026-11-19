@@ -17,11 +17,11 @@ use crate::client::RestClient;
 use crate::error::RestError;
 use crate::routes::{encode_component, Routes};
 
-fn to_body<T: Serialize>(value: &T) -> Result<Value, RestError> {
+pub(crate) fn to_body<T: Serialize>(value: &T) -> Result<Value, RestError> {
     serde_json::to_value(value).map_err(|e| RestError::Transport(e.to_string()))
 }
 
-fn non_empty(body: Value) -> Option<Value> {
+pub(crate) fn non_empty(body: Value) -> Option<Value> {
     match &body {
         Value::Object(map) if map.is_empty() => None,
         Value::Null => None,

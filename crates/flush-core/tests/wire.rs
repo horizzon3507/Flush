@@ -1,5 +1,7 @@
 use flush_core::events::DispatchEnvelope;
-use flush_core::{Channel, ChannelType, Event, Guild, Message, MessageType, Role};
+use flush_core::{
+    Channel, ChannelType, Event, Guild, Message, MessageSend, MessageType, Role, Snowflake,
+};
 
 fn msg_fixture(embeds_null: bool) -> serde_json::Value {
     let embeds = if embeds_null {
@@ -280,12 +282,213 @@ fn expression_webhook_voice_events_decode() {
 }
 
 #[test]
-fn known_but_untyped_event_keeps_raw_payload() {
-    let ev = dispatch("PASSIVE_UPDATES", serde_json::json!({ "x": 1 }));
-    assert_eq!(ev.wire_name(), "PASSIVE_UPDATES");
+fn mismatched_or_unknown_event_keeps_raw_payload() {
+    let ev = dispatch("NOT_AN_EVENT", serde_json::json!({ "x": 1 }));
+    assert_eq!(ev.wire_name(), "NOT_AN_EVENT");
     assert!(matches!(ev, Event::Unknown { .. }));
     let bad = dispatch("THREAD_DELETE", serde_json::json!({}));
     assert!(matches!(bad, Event::Unknown { .. }));
+    let bad = dispatch("MESSAGE_ACK", serde_json::json!({ "channel_id": "1" }));
+    assert_eq!(bad.wire_name(), "MESSAGE_ACK");
+    assert!(matches!(bad, Event::Unknown { .. }));
+}
+
+#[test]
+fn every_dispatch_name_has_a_typed_variant() {
+    use serde_json::json;
+    let user = json!({ "id": "1", "username": "a" });
+    let message = json!({ "id": "5", "channel_id": "2", "author": user });
+    let mut failed = Vec::new();
+    for name in flush_core::DISPATCH_EVENTS {
+        let data = match *name {
+            "READY" => json!({ "session_id": "s" }),
+            "MESSAGE_CREATE" | "MESSAGE_UPDATE" | "SAVED_MESSAGE_CREATE" => message.clone(),
+            "WEBAUTHN_CREDENTIALS_UPDATE" => json!([]),
+            "USER_UPDATE" => user.clone(),
+            _ => json!({
+                "id": "1", "guild_id": "3", "channel_id": "2", "message_id": "5",
+                "user_id": "1", "thread_id": "9", "sound_id": "8", "role_id": "4",
+                "type": 0, "name": "n", "code": "abc", "user": user, "token": "t",
+                "role": { "id": "4", "name": "r", "color": 0, "position": 0, "permissions": "0",
+                          "hoist": false, "mentionable": false },
+                "action_type": 1,
+                "emoji": { "name": "x" },
+                "member": { "user": user },
+            }),
+        };
+        let ev = dispatch(name, data);
+        if matches!(ev, Event::Unknown { .. }) || ev.kind() != *name {
+            failed.push(*name);
+        }
+    }
+    assert!(failed.is_empty(), "decoded as Unknown: {failed:?}");
+}
+
+#[test]
+fn read_state_and_count_events_decode() {
+    use serde_json::json;
+    assert_eq!(
+        dispatch(
+            "MESSAGE_ACK",
+            json!({ "channel_id": "2", "message_id": "5" })
+        ),
+        Event::MessageAck {
+            channel_id: Snowflake(2),
+            message_id: Snowflake(5)
+        }
+    );
+    let ev = dispatch(
+        "GUILD_COUNTS_UPDATE",
+        json!({ "counts": [{ "guild_id": "3", "member_count": 10, "online_count": null }] }),
+    );
+    match ev {
+        Event::GuildCountsUpdate { counts } => {
+            assert_eq!(counts[0].member_count, 10);
+            assert_eq!(counts[0].online_count, 0);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        dispatch("CHANNEL_MEMBER_COUNTS_UPDATE", json!({ "counts": null })),
+        Event::ChannelMemberCountsUpdate { counts: vec![] }
+    );
+    let ev = dispatch(
+        "FORUM_UNREADS",
+        json!({ "guild_id": "3", "channel_id": "2",
+                "threads": [{ "thread_id": "9", "count": 4 }, { "thread_id": "10", "missing": true }] }),
+    );
+    match ev {
+        Event::ForumUnreads { threads, .. } => {
+            assert_eq!(threads[0].count, Some(4));
+            assert_eq!(threads[1].missing, Some(true));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn bulk_reaction_presence_and_member_list_events_decode() {
+    use serde_json::json;
+    let ev = dispatch(
+        "MESSAGE_REACTION_ADD_MANY",
+        json!({ "channel_id": "2", "message_id": "5",
+                "reactions": [{ "user_id": "1", "emoji": { "name": "x" }, "member": { "nick": "n" } }] }),
+    );
+    match ev {
+        Event::MessageReactionAddMany {
+            reactions,
+            guild_id,
+            ..
+        } => {
+            assert_eq!(guild_id, None);
+            assert_eq!(reactions[0].user_id, Snowflake(1));
+            assert_eq!(reactions[0].member.as_ref().unwrap()["nick"], "n");
+        }
+        other => panic!("{other:?}"),
+    }
+    let ev = dispatch(
+        "PRESENCE_UPDATE_BULK",
+        json!({ "guild_id": "3", "presences": [{ "user": { "id": "1" }, "status": "online" }] }),
+    );
+    match ev {
+        Event::PresenceUpdateBulk { presences, .. } => {
+            assert_eq!(presences[0].status.as_deref(), Some("online"))
+        }
+        other => panic!("{other:?}"),
+    }
+    let ev = dispatch(
+        "GUILD_MEMBER_LIST_UPDATE",
+        json!({ "guild_id": "3", "id": "everyone", "member_count": 2, "online_count": 1,
+                "groups": [{ "id": "online", "count": 1 }],
+                "ops": [{ "op": "SYNC", "range": [0, 99], "items": [{ "group": { "id": "online" } }] },
+                        { "op": "DELETE", "index": 3 }] }),
+    );
+    match ev {
+        Event::GuildMemberListUpdate(u) => {
+            assert_eq!(u.ops[0].range, Some((0, 99)));
+            assert_eq!(u.ops[0].items.len(), 1);
+            assert_eq!(u.ops[1].index, Some(3));
+            assert!(u.ops[1].items.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn account_events_decode() {
+    use flush_core::RelationshipType;
+    use serde_json::json;
+    match dispatch("RELATIONSHIP_ADD", json!({ "id": "1", "type": 3 })) {
+        Event::RelationshipAdd(r) => assert_eq!(r.kind, RelationshipType::IncomingRequest),
+        other => panic!("{other:?}"),
+    }
+    match dispatch("RELATIONSHIP_UPDATE", json!({ "id": "1", "type": 77 })) {
+        Event::RelationshipUpdate(r) => assert_eq!(r.kind, RelationshipType::Unknown),
+        other => panic!("{other:?}"),
+    }
+    match dispatch(
+        "USER_SETTINGS_UPDATE",
+        json!({ "locale": "en-US", "custom_status": { "text": "hi" }, "developer_mode": true }),
+    ) {
+        Event::UserSettingsUpdate(s) => {
+            assert_eq!(s.locale.as_deref(), Some("en-US"));
+            assert_eq!(s.custom_status.unwrap().text.as_deref(), Some("hi"));
+            assert_eq!(s.extra["developer_mode"], true);
+        }
+        other => panic!("{other:?}"),
+    }
+    match dispatch(
+        "SESSIONS_REPLACE",
+        json!([{ "session_id": "s", "status": "idle" }]),
+    ) {
+        Event::SessionsReplace { sessions } => {
+            assert_eq!(sessions[0].status.as_deref(), Some("idle"))
+        }
+        other => panic!("{other:?}"),
+    }
+    match dispatch(
+        "WEBAUTHN_CREDENTIALS_UPDATE",
+        json!([{ "id": "c", "name": "key", "created_at": "t", "last_used_at": null }]),
+    ) {
+        Event::WebAuthnCredentialsUpdate(c) => assert_eq!(c[0].name, "key"),
+        other => panic!("{other:?}"),
+    }
+    match dispatch(
+        "VOICE_STATE_ACK",
+        json!({ "mutation_id": "m", "status": "applied",
+                "canonical_state": { "user_id": "1", "channel_id": "2" } }),
+    ) {
+        Event::VoiceStateAck(a) => {
+            assert_eq!(a.canonical_state.unwrap().channel_id, Some(Snowflake(2)))
+        }
+        other => panic!("{other:?}"),
+    }
+    match dispatch(
+        "CALL_CREATE",
+        json!({ "id": "1", "channel_id": "2", "ringing": ["3"] }),
+    ) {
+        Event::CallCreate(c) => assert_eq!(c.extra["ringing"][0], "3"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn message_send_attachments_serialize() {
+    use flush_core::AttachmentRef;
+    let payload = MessageSend {
+        attachments: vec![AttachmentRef {
+            id: 0,
+            filename: "a.png".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert!(payload.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(&payload).unwrap(),
+        serde_json::json!({ "attachments": [{ "id": 0, "filename": "a.png" }] })
+    );
+    assert!(MessageSend::default().validate().is_err());
 }
 
 #[test]
