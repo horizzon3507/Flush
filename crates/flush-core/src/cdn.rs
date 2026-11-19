@@ -1,8 +1,8 @@
-//! URLs de CDN da Fluxer (espelho de `Cdn.ts` do `@fluxerjs/core`).
+//! Fluxer CDN URLs (mirrors `Cdn.ts` in `@fluxerjs/core`).
 //!
-//! Avatar customizado vive em `fluxerusercontent.com`; o fallback usa
-//! `fluxerstatic.com/avatars/{id % 6}.png`. Hash `a_*` serve `gif`, o resto
-//! `png`; `size` sofre snap na escada oficial (ícone: 128–1024).
+//! Custom avatars live on `fluxerusercontent.com`; the fallback uses
+//! `fluxerstatic.com/avatars/{id % 6}.png`. `a_*` hashes serve `gif`, the rest
+//! `png`; `size` snaps to the official ladder (icon: 128–1024).
 
 use crate::snowflake::Snowflake;
 
@@ -95,7 +95,7 @@ fn extension(hash: &str) -> &'static str {
     }
 }
 
-/// `cdnAvatarURL`: `None` para hash vazio, como no SDK.
+/// `cdnAvatarURL`: `None` for an empty hash, as in the SDK.
 pub fn avatar_url(user_id: Snowflake, hash: &str, size: Option<u32>) -> Option<String> {
     if hash.is_empty() {
         return None;
@@ -113,12 +113,12 @@ pub fn avatar_url(user_id: Snowflake, hash: &str, size: Option<u32>) -> Option<S
     Some(url)
 }
 
-/// `cdnDefaultAvatarURL`: índice `id % 6` sobre o CDN estático.
+/// `cdnDefaultAvatarURL`: index `id % 6` on the static CDN.
 pub fn default_avatar_url(user_id: Snowflake) -> String {
     format!("{}/avatars/{}.png", STATIC_CDN_URL, user_id.get() % 6)
 }
 
-/// `cdnDisplayAvatarURL`: customizado ou fallback, nunca vazio.
+/// `cdnDisplayAvatarURL`: custom or fallback, never empty.
 pub fn display_avatar_url(user_id: Snowflake, hash: Option<&str>, size: Option<u32>) -> String {
     hash.and_then(|h| avatar_url(user_id, h, size))
         .unwrap_or_else(|| default_avatar_url(user_id))

@@ -127,7 +127,7 @@ fn ready_with_null_lists() {
             assert_eq!(p.session_id, "abc");
             assert!(p.guilds.is_empty());
         }
-        other => panic!("esperava Ready, veio {}", other.kind()),
+        other => panic!("expected Ready, got {}", other.kind()),
     }
 }
 
@@ -178,7 +178,7 @@ fn invite_tolerates_null_fields() {
 #[test]
 fn reaction_emoji_routes_encoding() {
     use flush_core::ReactionEmoji;
-    // unicode → percent bytes; custom → nome:id com `:` escapado.
+    // unicode → percent bytes; custom → name:id with `:` escaped.
     let unicode = ReactionEmoji {
         id: None,
         name: "🎉".into(),

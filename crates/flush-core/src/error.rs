@@ -7,8 +7,8 @@ pub enum CoreError {
     InvalidSnowflake(String),
     #[error("SNOWFLAKE_OUT_OF_RANGE: {0}")]
     SnowflakeOutOfRange(String),
-    #[error("embed inválido: {0}")]
+    #[error("invalid embed: {0}")]
     InvalidEmbed(String),
-    #[error("mensagem inválida: {0}")]
+    #[error("invalid message: {0}")]
     InvalidMessage(String),
 }

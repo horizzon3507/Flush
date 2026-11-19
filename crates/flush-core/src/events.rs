@@ -11,7 +11,7 @@ use crate::thread::ThreadMember;
 use crate::user::{PartialUser, User};
 use crate::voice::{VoiceServerUpdate, VoiceState};
 
-/// Envelope de Dispatch (op 0): `{ op: 0, t, s, d }`.
+/// Dispatch envelope (op 0): `{ op: 0, t, s, d }`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DispatchEnvelope {
     #[serde(rename = "t")]
@@ -22,7 +22,7 @@ pub struct DispatchEnvelope {
     pub data: serde_json::Value,
 }
 
-/// Payload mínimo do READY (subset de bot: session_id + user + guilds indisponíveis).
+/// Minimal READY payload (bot subset: session_id + user + unavailable guilds).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadyPayload {
     pub session_id: String,
@@ -34,7 +34,7 @@ pub struct ReadyPayload {
     pub users: Vec<PartialUser>,
 }
 
-/// Guild no READY de bot: `{ id, unavailable: true }` + burst de GUILD_CREATE depois.
+/// Guild in a bot READY: `{ id, unavailable: true }`, followed by a GUILD_CREATE burst.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuildReady {
     pub id: Snowflake,
@@ -42,7 +42,7 @@ pub struct GuildReady {
     pub unavailable: bool,
 }
 
-/// Eventos tipados que o Flush decodifica (subset de paridade inicial).
+/// Typed events Flush decodes. See [`DISPATCH_EVENTS`] for every wire name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {
@@ -216,7 +216,7 @@ pub enum Event {
     },
     VoiceStateUpdate(VoiceState),
     VoiceServerUpdate(VoiceServerUpdate),
-    /// Evento ainda sem tipo dedicado: nome + payload bruto.
+    /// Event without a dedicated type yet: name + raw payload.
     Unknown {
         kind: String,
         seq: u64,
@@ -288,7 +288,7 @@ impl Event {
         }
     }
 
-    /// Decodifica um envelope já parseado para o tipo dedicado (ou Unknown).
+    /// Decodes a parsed envelope into its dedicated type (or `Unknown`).
     pub fn decode(env: &DispatchEnvelope) -> Self {
         fn de<T: for<'de> Deserialize<'de>>(v: &serde_json::Value) -> Option<T> {
             serde_json::from_value(v.clone()).ok()
