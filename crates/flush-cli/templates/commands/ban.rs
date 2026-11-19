@@ -45,16 +45,12 @@ impl Command for Ban {
             };
             let reason = reason_from(&ctx.args, 1);
             let user = target.user.id;
-            let case = CaseStore::with_default_path().add(
-                &guild.to_string(),
-                CaseType::Ban,
-                &user.to_string(),
-                &ctx.message.author.id.to_string(),
-                &reason,
-            );
+            // The case is only recorded once the action went through.
+            let mut cases = CaseStore::with_default_path();
+            let case_id = cases.next_id(&guild.to_string());
             let rest = ctx.rest;
             let audit = reason.clone();
-            with_mod_action(ModAction {
+            let done = with_mod_action(ModAction {
                 ctx: &ctx,
                 executor: ctx.member.as_ref(),
                 action: PermissionAction::Ban,
@@ -62,7 +58,7 @@ impl Command for Ban {
                 reason: &reason,
                 success_icon: "✅",
                 success_description: &format!("**{}** was banned.", target.user.username),
-                case_id: case.id,
+                case_id,
                 extra: None,
                 log_channel: mod_log_channel(guild),
                 run: || async move {
@@ -76,6 +72,15 @@ impl Command for Ban {
                 },
             })
             .await?;
+            if done {
+                cases.add(
+                    &guild.to_string(),
+                    CaseType::Ban,
+                    &user.to_string(),
+                    &ctx.message.author.id.to_string(),
+                    &reason,
+                );
+            }
             Ok(())
         })
     }
