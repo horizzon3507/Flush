@@ -68,9 +68,10 @@ fn cargo() -> Command {
     Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
 }
 
-/// Path of the binary named in cargo's `--message-format=json` output.
-pub fn executable_from_messages(output: &str) -> Option<PathBuf> {
-    output
+/// Name and path of every binary in cargo's `--message-format=json` output.
+pub fn binaries_from_messages(output: &str) -> Vec<(String, PathBuf)> {
+    let mut binaries: Vec<(String, PathBuf)> = Vec::new();
+    let artifacts = output
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .filter(|message| message["reason"] == "compiler-artifact")
@@ -78,9 +79,56 @@ pub fn executable_from_messages(output: &str) -> Option<PathBuf> {
             message["target"]["kind"]
                 .as_array()
                 .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
+        });
+    for message in artifacts {
+        let (Some(name), Some(path)) = (
+            message["target"]["name"].as_str(),
+            message["executable"].as_str(),
+        ) else {
+            continue;
+        };
+        binaries.retain(|(known, _)| known != name);
+        binaries.push((name.to_owned(), PathBuf::from(path)));
+    }
+    binaries
+}
+
+/// `default-run` of the project's manifest, or else its package name: the
+/// binary `cargo run` would start.
+pub fn default_binary(manifest: &str) -> Option<String> {
+    let manifest: toml::Table = manifest.parse().ok()?;
+    let package = manifest.get("package")?;
+    package
+        .get("default-run")
+        .or_else(|| package.get("name"))
+        .and_then(|name| name.as_str())
+        .map(str::to_owned)
+}
+
+/// The bot binary: the only one built, or the one `cargo run` would pick.
+pub fn select_binary(
+    mut binaries: Vec<(String, PathBuf)>,
+    default: Option<&str>,
+) -> Result<PathBuf, CliError> {
+    if binaries.len() == 1 {
+        return Ok(binaries.remove(0).1);
+    }
+    if binaries.is_empty() {
+        return Err(CliError::new(
+            "BUILD_FAILED",
+            "The project builds no binary.",
+        ));
+    }
+    binaries
+        .into_iter()
+        .find(|(name, _)| Some(name.as_str()) == default)
+        .map(|(_, path)| path)
+        .ok_or_else(|| {
+            CliError::new(
+                "BUILD_FAILED",
+                "The project builds several binaries; set `default-run` in Cargo.toml to the bot.",
+            )
         })
-        .filter_map(|message| message["executable"].as_str().map(PathBuf::from))
-        .next_back()
 }
 
 /// Builds the project and returns the bot binary. Compiler output goes to
@@ -132,8 +180,11 @@ fn build_with(
     if !status.success() {
         return Err(CliError::new("BUILD_FAILED", "cargo build failed."));
     }
-    executable_from_messages(&messages)
-        .ok_or_else(|| CliError::new("BUILD_FAILED", "The project builds no binary."))
+    let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap_or_default();
+    select_binary(
+        binaries_from_messages(&messages),
+        default_binary(&manifest).as_deref(),
+    )
 }
 
 /// A signal during a build ends the command cleanly; other failures stay errors.
@@ -328,20 +379,54 @@ mod tests {
     }
 
     #[test]
-    fn picks_the_binary_from_cargo_messages() {
-        let output = concat!(
-            "{\"reason\":\"compiler-artifact\",\"target\":{\"kind\":[\"lib\"]},\"executable\":null}\n",
-            "not json\n",
-            "{\"reason\":\"compiler-artifact\",\"target\":{\"kind\":[\"bin\"]},\"executable\":\"/t/debug/bot\"}\n",
-            "{\"reason\":\"build-finished\",\"success\":true}\n",
+    fn picks_the_binary_cargo_run_would_start() {
+        let artifact = |kind: &str, name: &str, path: &str| {
+            format!(
+                "{{\"reason\":\"compiler-artifact\",\"target\":{{\"kind\":[\"{kind}\"],\"name\":\"{name}\"}},\"executable\":{path}}}\n"
+            )
+        };
+        let single = format!(
+            "{}not json\n{}{{\"reason\":\"build-finished\",\"success\":true}}\n",
+            artifact("lib", "dep", "null"),
+            artifact("bin", "bot", "\"/t/debug/bot\""),
+        );
+        let binaries = binaries_from_messages(&single);
+        assert_eq!(
+            binaries,
+            vec![("bot".to_owned(), PathBuf::from("/t/debug/bot"))]
         );
         assert_eq!(
-            executable_from_messages(output),
-            Some(PathBuf::from("/t/debug/bot"))
+            select_binary(binaries, None).unwrap(),
+            PathBuf::from("/t/debug/bot")
+        );
+
+        // Cargo reports binaries in build order, so the helper may come last.
+        let several = format!(
+            "{}{}",
+            artifact("bin", "bot", "\"/t/debug/bot\""),
+            artifact("bin", "migrate", "\"/t/debug/migrate\""),
+        );
+        let pick = |manifest: &str| {
+            select_binary(
+                binaries_from_messages(&several),
+                default_binary(manifest).as_deref(),
+            )
+        };
+        assert_eq!(
+            pick("[package]\nname = \"bot\"\n").unwrap(),
+            PathBuf::from("/t/debug/bot")
         );
         assert_eq!(
-            executable_from_messages("{\"reason\":\"build-finished\"}"),
-            None
+            pick("[package]\nname = \"tools\"\ndefault-run = \"migrate\"\n").unwrap(),
+            PathBuf::from("/t/debug/migrate")
+        );
+        assert_eq!(
+            pick("[package]\nname = \"tools\"\n").unwrap_err().code,
+            "BUILD_FAILED"
+        );
+        assert_eq!(
+            select_binary(Vec::new(), None).unwrap_err().code,
+            "BUILD_FAILED"
         );
     }
 

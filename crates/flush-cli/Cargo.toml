@@ -17,3 +17,4 @@ flush-framework = { path = "../flush-framework", version = "0.2.0" }
 serde.workspace = true
 serde_json.workspace = true
 signal-hook = "0.3"
+toml.workspace = true
