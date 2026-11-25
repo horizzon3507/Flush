@@ -1234,7 +1234,11 @@ impl RestClient {
         }
         self.request(
             "GET",
-            &Routes::channel_reaction(channel, message, &crate::routes::encode_component(emoji)),
+            &Routes::channel_reaction_users(
+                channel,
+                message,
+                &crate::routes::encode_component(emoji),
+            ),
             None,
             None,
             Some(&query),
