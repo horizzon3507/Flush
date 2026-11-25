@@ -178,8 +178,12 @@ existing file. `restore` is a dry run unless `--apply` is given; `--policy`
 is `replace` (default) or `merge` (guilds in the backup win, the others are
 kept). Restoring a backup of the other store kind is refused, and so is a
 backup with an entry the stores could not read back. A `replace` restore also
-works when the store is missing or damaged. Restart the bot after `--apply`:
-a running bot keeps the store it loaded in memory.
+works when the store is missing or damaged, and creates the data directory
+when it does not exist yet. The kind is checked against the store's file name
+(`cases.json`, `guilds.json`) even when one side is empty.
+
+Stop the bot before `restore --apply`. A running bot keeps its stores in
+memory and writes them back whole, so it can overwrite a restore made under it.
 
 ## Not ported yet
 

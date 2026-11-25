@@ -262,10 +262,12 @@ pub fn data_command(
             if apply {
                 write_atomic(input, &restored)?;
             }
+            // A running bot keeps its stores in memory and writes them back
+            // whole, so it must be down while the file is replaced.
             let note = if apply {
-                "Restart the bot: a running bot keeps the store it loaded in memory."
+                "Restored. If the bot was running, stop it and restore again: it can overwrite this file from memory."
             } else {
-                "Dry run: nothing was written. Pass --apply to restore."
+                "Dry run: nothing was written. Stop the bot, then pass --apply to restore."
             };
             Ok(json!({
                 "note": note,
