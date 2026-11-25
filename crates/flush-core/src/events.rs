@@ -750,8 +750,13 @@ fn field<T: for<'de> Deserialize<'de>>(data: &serde_json::Value, key: &str) -> O
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
-fn list<T: for<'de> Deserialize<'de>>(data: &serde_json::Value, key: &str) -> Vec<T> {
-    field(data, key).unwrap_or_default()
+/// Missing or `null` is an empty list; a malformed entry is `None`, so the
+/// event falls back to `Unknown` and keeps its raw payload.
+fn list<T: for<'de> Deserialize<'de>>(data: &serde_json::Value, key: &str) -> Option<Vec<T>> {
+    match data.get(key) {
+        None | Some(serde_json::Value::Null) => Some(Vec::new()),
+        Some(v) => serde_json::from_value(v.clone()).ok(),
+    }
 }
 
 /// Missing or `null` is an empty list; anything else must decode in full.
@@ -775,29 +780,29 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
         "USER_UPDATE" => Event::UserUpdate(whole(d)?),
         "GUILD_MEMBERS_CHUNK" => Event::GuildMembersChunk {
             guild_id: field(d, "guild_id")?,
-            members: list(d, "members"),
+            members: list(d, "members")?,
             chunk_index: field(d, "chunk_index").unwrap_or(0),
             chunk_count: field(d, "chunk_count").unwrap_or(1),
-            not_found: list(d, "not_found"),
+            not_found: list(d, "not_found")?,
         },
         "GUILD_ROLE_UPDATE_BULK" => Event::GuildRoleUpdateBulk {
             guild_id: field(d, "guild_id")?,
-            roles: list(d, "roles"),
+            roles: list(d, "roles")?,
         },
         "GUILD_EMOJIS_UPDATE" => Event::GuildEmojisUpdate {
             guild_id: field(d, "guild_id")?,
-            emojis: list(d, "emojis"),
+            emojis: list(d, "emojis")?,
         },
         "GUILD_STICKERS_UPDATE" => Event::GuildStickersUpdate {
             guild_id: field(d, "guild_id")?,
-            stickers: list(d, "stickers"),
+            stickers: list(d, "stickers")?,
         },
         "GUILD_AUDIT_LOG_ENTRY_CREATE" => Event::GuildAuditLogEntryCreate {
             guild_id: field(d, "guild_id"),
             entry: whole(d)?,
         },
         "CHANNEL_UPDATE_BULK" => Event::ChannelUpdateBulk {
-            channels: list(d, "channels"),
+            channels: list(d, "channels")?,
         },
         "CHANNEL_PINS_UPDATE" => Event::ChannelPinsUpdate {
             channel_id: field(d, "channel_id")?,
@@ -821,9 +826,9 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
         },
         "THREAD_LIST_SYNC" => Event::ThreadListSync {
             guild_id: field(d, "guild_id")?,
-            channel_ids: list(d, "channel_ids"),
-            threads: list(d, "threads"),
-            members: list(d, "members"),
+            channel_ids: list(d, "channel_ids")?,
+            threads: list(d, "threads")?,
+            members: list(d, "members")?,
         },
         "THREAD_MEMBER_UPDATE" => Event::ThreadMemberUpdate {
             guild_id: field(d, "guild_id"),
@@ -833,8 +838,8 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
             id: field(d, "id")?,
             guild_id: field(d, "guild_id"),
             member_count: field(d, "member_count").unwrap_or(0),
-            added_members: list(d, "added_members"),
-            removed_member_ids: list(d, "removed_member_ids"),
+            added_members: list(d, "added_members")?,
+            removed_member_ids: list(d, "removed_member_ids")?,
         },
         "INVITE_CREATE" => Event::InviteCreate {
             guild_id: field(d, "guild_id"),
