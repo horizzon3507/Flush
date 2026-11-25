@@ -116,8 +116,9 @@ them fails:
 `run` and `dev` validate the config and the token first, then build the
 project with cargo and start the bot binary directly, with the project
 directory as its working directory and the `.env` values in its environment.
-When the project builds several binaries, the bot is the one `cargo run` would
-start: `default-run`, or else the binary named after the package.
+When the project builds several binaries, `default-run` in `Cargo.toml` names
+the bot, as it does for `cargo run`; without it the command fails with
+`BUILD_FAILED`.
 `FLUSH_CONFIG` carries the path of the validated config, so a bot started
 with `flush run ./config/bot.toml` reads that same file.
 

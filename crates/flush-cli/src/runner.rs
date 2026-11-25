@@ -93,15 +93,14 @@ pub fn binaries_from_messages(output: &str) -> Vec<(String, PathBuf)> {
     binaries
 }
 
-/// `default-run` of the project's manifest, or else its package name: the
-/// binary `cargo run` would start.
+/// `default-run` of the project's manifest. Like `cargo run`, nothing else
+/// picks between several binaries, not even one named after the package.
 pub fn default_binary(manifest: &str) -> Option<String> {
     let manifest: toml::Table = manifest.parse().ok()?;
-    let package = manifest.get("package")?;
-    package
-        .get("default-run")
-        .or_else(|| package.get("name"))
-        .and_then(|name| name.as_str())
+    manifest
+        .get("package")?
+        .get("default-run")?
+        .as_str()
         .map(str::to_owned)
 }
 
@@ -413,7 +412,11 @@ mod tests {
             )
         };
         assert_eq!(
-            pick("[package]\nname = \"bot\"\n").unwrap(),
+            pick("[package]\nname = \"bot\"\n").unwrap_err().code,
+            "BUILD_FAILED"
+        );
+        assert_eq!(
+            pick("[package]\nname = \"bot\"\ndefault-run = \"bot\"\n").unwrap(),
             PathBuf::from("/t/debug/bot")
         );
         assert_eq!(
