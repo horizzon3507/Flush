@@ -271,12 +271,13 @@ impl MemoryVariableStore {
 
 type MemoryKey = (VariableScope, String, String);
 
-/// The map during a transaction. Writes go straight to it and the entries
-/// they replace are kept, so a transaction costs what it touches instead of
-/// a copy of the store; dropping it without `commit` puts them back.
+/// The map during a transaction. Writes go straight to it and what each
+/// touched key held before the transaction is kept, so a transaction costs
+/// what it touches instead of a copy of the store; dropping it without
+/// `commit` puts those back.
 struct MemoryDraft<'a> {
     map: &'a mut MemoryMap,
-    replaced: Vec<(MemoryKey, Option<(String, StoredVariable)>)>,
+    replaced: BTreeMap<MemoryKey, Option<(String, StoredVariable)>>,
 }
 
 impl MemoryDraft<'_> {
@@ -287,7 +288,7 @@ impl MemoryDraft<'_> {
 
 impl Drop for MemoryDraft<'_> {
     fn drop(&mut self) {
-        while let Some((key, before)) = self.replaced.pop() {
+        while let Some((key, before)) = self.replaced.pop_first() {
             match before {
                 Some(entry) => self.map.insert(key, entry),
                 None => self.map.remove(&key),
@@ -314,13 +315,13 @@ impl VariableAccess for MemoryDraft<'_> {
         let before = self
             .map
             .insert(key_in_map.clone(), (key.name.clone(), stored));
-        self.replaced.push((key_in_map, before));
+        self.replaced.entry(key_in_map).or_insert(before);
         Ok(())
     }
     fn delete(&mut self, key: &VariableKey) -> Result<(), StoreError> {
         let key_in_map = memory_key(key);
         if let Some(before) = self.map.remove(&key_in_map) {
-            self.replaced.push((key_in_map, Some(before)));
+            self.replaced.entry(key_in_map).or_insert(Some(before));
         }
         Ok(())
     }
@@ -385,7 +386,7 @@ impl VariableStore for MemoryVariableStore {
         let mut guard = self.lock();
         let mut draft = MemoryDraft {
             map: &mut guard,
-            replaced: Vec::new(),
+            replaced: BTreeMap::new(),
         };
         body(&mut draft)?;
         draft.commit();
