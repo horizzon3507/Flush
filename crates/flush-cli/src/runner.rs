@@ -519,19 +519,20 @@ mod tests {
     fn an_interrupt_stops_what_cargo_started() {
         let dir = temp("descendants");
         let fake = dir.join("cargo");
-        // Stands in for rustc: a child that outlives a killed parent.
-        std::fs::write(&fake, "#!/bin/sh\nsleep 30 &\necho $! > child.pid\nwait\n").unwrap();
+        // Stands in for rustc: a child that outlives a killed parent, and
+        // shows it is alive by writing to a file.
+        let script = "#!/bin/sh\n(while :; do echo beat >> beats; sleep 0.1; done) &\nwait\n";
+        std::fs::write(&fake, script).unwrap();
         std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
             .unwrap();
         let stopping = Arc::new(AtomicBool::new(false));
         let raise = stopping.clone();
-        let pid_file = dir.join("child.pid");
-        let wait_for = pid_file.clone();
+        let beats = dir.join("beats");
+        let written = move || std::fs::metadata(&beats).map_or(0, |beats| beats.len());
+        let started = written.clone();
         let raiser = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(10);
-            while std::fs::read_to_string(&wait_for).map_or(true, |pid| !pid.ends_with('\n'))
-                && Instant::now() < deadline
-            {
+            while started() == 0 && Instant::now() < deadline {
                 std::thread::sleep(POLL);
             }
             raise.store(true, Ordering::Relaxed);
@@ -539,24 +540,10 @@ mod tests {
         let error = build_with(Command::new(&fake), &dir, false, &stopping).unwrap_err();
         raiser.join().unwrap();
         assert_eq!(error.code, "INTERRUPTED");
-        let pid = std::fs::read_to_string(&pid_file).unwrap();
-        // A killed process nobody reaped yet still has a pid: `Z` is dead.
-        let alive = |pid: &str| {
-            let state = Command::new("ps")
-                .args(["-o", "stat=", "-p", pid])
-                .stderr(Stdio::null())
-                .output()
-                .unwrap()
-                .stdout;
-            !matches!(state.trim_ascii().first(), None | Some(b'Z'))
-        };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while alive(pid.trim()) && Instant::now() < deadline {
-            std::thread::sleep(POLL);
-        }
-        assert!(!alive(pid.trim()));
-        // Proves `ps` answers here: no output must mean the process is gone.
-        assert!(alive(&std::process::id().to_string()));
+        let at_stop = written();
+        assert!(at_stop > 0);
+        std::thread::sleep(Duration::from_secs(1));
+        assert_eq!(written(), at_stop);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
