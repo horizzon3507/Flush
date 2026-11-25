@@ -7,6 +7,7 @@ rust-version.workspace = true
 description = "Flush prefix command framework (router, typed arguments, middleware, collectors, scheduler, per-server config)"
 
 [dependencies]
+flush-canvas = { path = "../flush-canvas", version = "0.2.0" }
 flush-core = { path = "../flush-core", version = "0.2.0" }
 flush-gateway = { path = "../flush-gateway", version = "0.2.0" }
 flush-rest = { path = "../flush-rest", version = "0.2.0" }

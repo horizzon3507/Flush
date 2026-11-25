@@ -72,6 +72,20 @@ impl CommandCtx<'_> {
             .await?)
     }
 
+    /// `ctx.canvas`: the canvas service bound to this channel
+    /// (`create`/`send`/`load_image`, yuzuha parity).
+    pub fn canvas(&self) -> flush_canvas::CanvasService<'_> {
+        flush_canvas::CanvasService::with_transport(
+            self.rest,
+            self.channel_id(),
+            flush_canvas::CanvasConfig {
+                fetch_remote: true,
+                ..Default::default()
+            },
+        )
+        .expect("default canvas config is valid")
+    }
+
     /// Resolves a member from a mention, `id` or `name!id` via REST.
     /// A 404 becomes `Ok(None)` (the caller decides how to reply).
     pub async fn target_member(&self, raw: &str) -> Result<Option<MemberUser>, CommandError> {
