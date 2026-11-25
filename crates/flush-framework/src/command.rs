@@ -148,13 +148,16 @@ pub fn mod_success(
     out
 }
 
-pub fn parsed_lookup<'a>(
+pub fn parsed_lookup(
     parsed: &ParsedCommand,
-    commands: &'a [Box<dyn Command>],
-) -> Option<&'a dyn Command> {
+    commands: &[std::sync::Arc<dyn Command>],
+) -> Option<std::sync::Arc<dyn Command>> {
     let lower = parsed.name.to_lowercase();
-    commands.iter().find_map(|c| {
-        let c: &'a dyn Command = c.as_ref();
-        (c.name() == lower || c.aliases().iter().any(|a| a.to_lowercase() == lower)).then_some(c)
-    })
+    commands
+        .iter()
+        .find(|c| {
+            let c: &dyn Command = c.as_ref();
+            c.name() == lower || c.aliases().iter().any(|a| a.to_lowercase() == lower)
+        })
+        .cloned()
 }

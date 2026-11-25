@@ -29,7 +29,7 @@ impl Help {
         }
     }
 
-    pub fn refresh(&self, commands: &[Box<dyn Command>]) {
+    pub fn refresh(&self, commands: &[std::sync::Arc<dyn Command>]) {
         let list: Vec<CommandInfo> = commands
             .iter()
             .map(|c| CommandInfo {

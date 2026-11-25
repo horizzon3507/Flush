@@ -15,12 +15,14 @@ pub mod cluster;
 pub mod collector;
 pub mod command;
 pub mod cooldown;
+pub mod cron;
 pub mod guild_store;
 pub mod help;
 pub mod middleware;
 pub mod moderation;
 pub mod parse;
 pub mod project;
+pub mod registry;
 pub mod router;
 pub mod scheduler;
 pub mod sharding;
@@ -39,6 +41,7 @@ pub use collector::{CollectedReaction, Collector, Collectors};
 pub use command::{info_block, mod_success, plain_error};
 pub use command::{Command, CommandCtx, CommandError, CommandResult};
 pub use cooldown::Cooldowns;
+pub use cron::{assert_timezone, next_cron, parse_cron, CronError, CronExpression, MissedRunPolicy};
 pub use guild_store::{GuildConfig, GuildConfigPatch, GuildStore};
 pub use help::{CommandInfo, Help, HelpCmd};
 pub use middleware::{guild_only, Flow, Guard, Middleware};
@@ -48,6 +51,7 @@ pub use project::{
     bot_from_project, find_config, load_env, parse_env, read_env_file, ConfigError, ProjectConfig,
     CONFIG_ENV, CONFIG_FILE,
 };
+pub use registry::{CommandLoader, CommandRegistry};
 pub use router::{Bot, BotConfig, HookEvent, Hooks, NoHooks};
 pub use scheduler::{JobHandle, Scheduler};
 pub use sharding::{

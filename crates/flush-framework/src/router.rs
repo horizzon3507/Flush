@@ -112,7 +112,7 @@ impl Hooks for NoHooks {
 
 pub struct Bot {
     config: BotConfig,
-    commands: Vec<Box<dyn Command>>,
+    commands: Arc<crate::registry::CommandRegistry>,
     cooldowns: Cooldowns,
     seen: HashSet<Snowflake>,
     store: GuildStore,
@@ -137,7 +137,7 @@ impl Bot {
         };
         Ok(Self {
             config,
-            commands: Vec::new(),
+            commands: Arc::new(crate::registry::CommandRegistry::new()),
             cooldowns: Cooldowns::new(),
             seen: HashSet::new(),
             store,
@@ -223,30 +223,62 @@ impl Bot {
     }
 
     /// Registers the built-in `help` command, which lists the other commands.
-    /// The snapshot is synced in `run()`.
+    /// The snapshot is synced in `run()` and after each `load`/`reload`.
     pub fn enable_help(mut self) -> Self {
         if self.help.is_none() {
             let h = Arc::new(crate::help::Help::new());
             self.help = Some(h.clone());
-            self.commands.push(Box::new(crate::help::HelpCmd(h)));
+            let _ = self.commands.add(Box::new(crate::help::HelpCmd(h)));
         }
         self
     }
 
     /// Syncs the `help` snapshot (called internally by `run()`).
-    pub fn refresh_help(&mut self) {
+    pub fn refresh_help(&self) {
         if let Some(h) = &self.help {
-            h.refresh(&self.commands);
+            h.refresh(&self.commands.snapshot());
         }
     }
 
-    pub fn command(mut self, cmd: impl Command + 'static) -> Self {
-        self.commands.push(Box::new(cmd));
+    pub fn command(self, cmd: impl Command + 'static) -> Self {
+        if let Err(e) = self.commands.add(Box::new(cmd)) {
+            panic!("flush: {e}");
+        }
         self
     }
 
-    pub fn commands_vec(&self) -> &[Box<dyn Command>] {
-        &self.commands
+    /// Handle that loads and reloads command groups on a running bot
+    /// (port of Yuzuha `bot.load(dir)` / `bot.reload(dir)`). A directory
+    /// is the caller's label for a group — generated projects map it to
+    /// `src/commands`. `load` replaces every command; `reload` replaces
+    /// only that directory's, preserving manual and other groups. The
+    /// swap is atomic and the help snapshot is synced.
+    pub fn loader(&self) -> crate::registry::CommandLoader {
+        crate::registry::CommandLoader::new(self.commands.clone(), self.help.clone())
+    }
+
+    /// [`CommandLoader::load`] on this bot's registry.
+    pub fn load(
+        &self,
+        directory: impl Into<String>,
+        commands: Vec<Box<dyn Command>>,
+    ) -> Result<(), CommandError> {
+        self.loader().load(directory, commands)
+    }
+
+    /// [`CommandLoader::reload`] on this bot's registry.
+    pub fn reload(
+        &self,
+        directory: impl AsRef<str>,
+        commands: Vec<Box<dyn Command>>,
+    ) -> Result<(), CommandError> {
+        self.loader().reload(directory, commands)
+    }
+
+    /// The current command list (a snapshot: later `load`/`reload` calls
+    /// do not change the returned vector).
+    pub fn commands_vec(&self) -> Vec<Arc<dyn Command>> {
+        self.commands.snapshot()
     }
 
     /// Main loop: REST (discovery) → Gateway → dispatch until a fatal error.
@@ -564,7 +596,8 @@ impl Bot {
             return;
         };
 
-        let Some(cmd) = crate::command::parsed_lookup(&parsed, &self.commands) else {
+        let commands = self.commands.snapshot();
+        let Some(cmd) = crate::command::parsed_lookup(&parsed, &commands) else {
             return;
         };
         let cmd_name = cmd.name().to_owned();
@@ -666,8 +699,8 @@ impl Bot {
                 return;
             }
         }
-        // `commands` is immutable while executing: resolve again to get the reference.
-        let Some(cmd) = crate::command::parsed_lookup(&parsed, &self.commands) else {
+        // Resolve again on the same snapshot: the middleware may have run a while.
+        let Some(cmd) = crate::command::parsed_lookup(&parsed, &commands) else {
             return;
         };
         if let Err(e) = cmd.execute(ctx).await {

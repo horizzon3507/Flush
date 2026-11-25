@@ -88,6 +88,88 @@ impl Scheduler {
         handle
     }
 
+    /// Runs `job` on a cron schedule in `timezone` (IANA name, e.g.
+    /// `"America/Bahia"` or `"UTC"`), with `RunOnce` missed-run policy.
+    /// The first run happens on the next matching instant.
+    pub fn cron<F, Fut>(
+        &self,
+        expression: &str,
+        timezone: &str,
+        job: F,
+    ) -> Result<JobHandle, crate::cron::CronError>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.cron_with_policy(
+            expression,
+            timezone,
+            crate::cron::MissedRunPolicy::RunOnce,
+            job,
+        )
+    }
+
+    /// [`Scheduler::cron`] with an explicit [`MissedRunPolicy`]: `Skip`
+    /// drops an occurrence more than 60s late, `RunOnce` fires it on wake.
+    /// Both re-arm on the next matching instant.
+    pub fn cron_with_policy<F, Fut>(
+        &self,
+        expression: &str,
+        timezone: &str,
+        missed_run: crate::cron::MissedRunPolicy,
+        job: F,
+    ) -> Result<JobHandle, crate::cron::CronError>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        use crate::cron::{next_cron, MissedRunPolicy};
+        let expression = expression.to_string();
+        crate::cron::parse_cron(&expression)?;
+        let timezone = timezone.to_string();
+        crate::cron::assert_timezone(&timezone)?;
+        let handle = self.register();
+        let flag = handle.clone();
+        let paused = self.paused.clone();
+        async_std::task::spawn(async move {
+            let now_ms = || {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0)
+            };
+            let mut after = now_ms();
+            loop {
+                let due = match next_cron(&expression, &timezone, after) {
+                    Ok(due) => due,
+                    Err(e) => {
+                        log::warn!("flush: cron job ended: {e}");
+                        break;
+                    }
+                };
+                let delay = (due - now_ms()).max(0) as u64;
+                async_std::task::sleep(Duration::from_millis(delay)).await;
+                if flag.is_cancelled() {
+                    break;
+                }
+                let now = now_ms();
+                if paused.load(Ordering::SeqCst) {
+                    after = now;
+                    continue;
+                }
+                if missed_run == MissedRunPolicy::Skip && due + 60_000 <= now {
+                    // Mirrors Yuzuha: skip to the next slot after this minute.
+                    after = (now / 60_000) * 60_000 - 1;
+                    continue;
+                }
+                job().await;
+                after = now_ms();
+            }
+            flag.cancel();
+        });
+        Ok(handle)
+    }
+
     /// Jobs registered and not yet cancelled or finished.
     pub fn active(&self) -> usize {
         let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
@@ -149,5 +231,18 @@ mod tests {
         handle.cancel();
         async_std::task::sleep(Duration::from_millis(50)).await;
         assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    #[async_std::test]
+    async fn cron_validates_expression_and_timezone() {
+        let scheduler = Scheduler::new();
+        assert!(scheduler.cron("not cron", "UTC", || async move {}).is_err());
+        assert!(scheduler
+            .cron("* * * * *", "Not/AZone", || async move {})
+            .is_err());
+        let handle = scheduler.cron("* * * * *", "UTC", || async move {}).unwrap();
+        assert_eq!(scheduler.active(), 1);
+        handle.cancel();
+        assert_eq!(scheduler.active(), 0);
     }
 }
