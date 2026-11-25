@@ -48,15 +48,17 @@ fn kind_from_name(path: &Path) -> Option<&'static str> {
     }
 }
 
-/// `cases` when every guild entry holds a `cases` list, otherwise `guilds`.
-/// An empty store has no entries to tell.
+/// `cases` when every guild entry is a case record (a `cases` list or, for a
+/// guild without one yet, its `next_id` counter), otherwise `guilds`. An
+/// empty store has no entries to tell.
 fn kind_from_entries(store: &Store) -> Option<&'static str> {
     if store.is_empty() {
         return None;
     }
-    let cases = store
-        .values()
-        .all(|entry| entry.get("cases").is_some_and(Value::is_array));
+    let cases = store.values().all(|entry| {
+        entry.get("cases").is_some_and(Value::is_array)
+            || entry.get("next_id").is_some_and(Value::is_u64)
+    });
     Some(if cases { "cases" } else { "guilds" })
 }
 
@@ -465,6 +467,9 @@ mod tests {
             invalid_entry("cases", &store(r#"{"1":{"next_id":1,"cases":null}}"#)),
             Some("1")
         );
+        let kind = |text: &str| kind_from_entries(&store(text));
+        assert_eq!(kind(r#"{"1":{"next_id":1}}"#), Some("cases"));
+        assert_eq!(kind(r#"{"1":{"prefix":"!"}}"#), Some("guilds"));
     }
 
     #[test]
