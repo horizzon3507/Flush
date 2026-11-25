@@ -153,6 +153,10 @@ fn build_with(
     if release {
         command.arg("--release");
     }
+    // Its own process group, so an interrupt reaches rustc, linkers and
+    // build scripts too, and a terminal Ctrl+C is ours to handle.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut cargo = command
         .spawn()
         .map_err(|e| CliError::new("BUILD_FAILED", format!("Cannot run cargo: {e}.")))?;
@@ -169,14 +173,19 @@ fn build_with(
             break status;
         }
         if stopping.load(Ordering::Relaxed) {
-            let _ = cargo.kill();
-            let _ = cargo.wait();
-            return Err(CliError::new("INTERRUPTED", "The build was interrupted."));
+            kill_build(&mut cargo);
+            return Err(interruption());
         }
         std::thread::sleep(POLL);
     };
     let messages = messages.join().unwrap_or_default();
     if !status.success() {
+        // Where the signal also reached cargo, it may have died before the
+        // flag was seen: that is still an interrupt, not a failed build.
+        if stopping.load(Ordering::Relaxed) {
+            kill_build(&mut cargo);
+            return Err(interruption());
+        }
         return Err(CliError::new("BUILD_FAILED", "cargo build failed."));
     }
     let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap_or_default();
@@ -184,6 +193,21 @@ fn build_with(
         binaries_from_messages(&messages),
         default_binary(&manifest).as_deref(),
     )
+}
+
+fn interruption() -> CliError {
+    CliError::new("INTERRUPTED", "The build was interrupted.")
+}
+
+/// Kills cargo and, on Unix, everything it started (its process group).
+fn kill_build(cargo: &mut Child) {
+    #[cfg(unix)]
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{}", cargo.id())])
+        .stderr(Stdio::null())
+        .status();
+    let _ = cargo.kill();
+    let _ = cargo.wait();
 }
 
 /// A signal during a build ends the command cleanly; other failures stay errors.
@@ -487,6 +511,71 @@ mod tests {
         assert_eq!(error.code, "INTERRUPTED");
         assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(interrupted(error), Ok(0));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_interrupt_stops_what_cargo_started() {
+        let dir = temp("descendants");
+        let fake = dir.join("cargo");
+        // Stands in for rustc: a child that outlives a killed parent.
+        std::fs::write(&fake, "#!/bin/sh\nsleep 30 &\necho $! > child.pid\nwait\n").unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let stopping = Arc::new(AtomicBool::new(false));
+        let raise = stopping.clone();
+        let pid_file = dir.join("child.pid");
+        let wait_for = pid_file.clone();
+        let raiser = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while std::fs::read_to_string(&wait_for).map_or(true, |pid| !pid.ends_with('\n'))
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(POLL);
+            }
+            raise.store(true, Ordering::Relaxed);
+        });
+        let error = build_with(Command::new(&fake), &dir, false, &stopping).unwrap_err();
+        raiser.join().unwrap();
+        assert_eq!(error.code, "INTERRUPTED");
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let alive = || {
+            Command::new("kill")
+                .args(["-0", pid.trim()])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive() && Instant::now() < deadline {
+            std::thread::sleep(POLL);
+        }
+        assert!(!alive());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_build_that_died_from_the_signal_is_an_interrupt() {
+        let dir = temp("died");
+        let fake = dir.join("cargo");
+        std::fs::write(&fake, "#!/bin/sh\nexit 130\n").unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let code = |stopping: bool| {
+            // Let the fake exit before the flag is looked at.
+            let flag = Arc::new(AtomicBool::new(false));
+            let raise = flag.clone();
+            let raiser = std::thread::spawn(move || raise.store(stopping, Ordering::Relaxed));
+            raiser.join().unwrap();
+            build_with(Command::new(&fake), &dir, false, &flag)
+                .unwrap_err()
+                .code
+        };
+        assert_eq!(code(false), "BUILD_FAILED");
+        assert_eq!(code(true), "INTERRUPTED");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
