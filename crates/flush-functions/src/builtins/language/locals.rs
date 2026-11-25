@@ -30,7 +30,8 @@ pub fn register(d: &mut Definitions) {
                             map.get(key.as_str()).cloned().unwrap_or(Value::Null)
                         }
                         Value::Array(ref list) => key_typed
-                            .as_u64()
+                            .as_f64()
+                            .filter(|f| f.fract() == 0.0 && *f >= 0.0)
                             .and_then(|i| list.get(i as usize))
                             .cloned()
                             .unwrap_or(Value::Null),
