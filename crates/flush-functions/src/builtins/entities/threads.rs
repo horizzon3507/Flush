@@ -433,7 +433,7 @@ pub fn register(d: &mut Definitions) {
         "Adds a member to the thread.",
         |c| {
             Box::pin(async move {
-                let (thread, user) = thread_member_args(&c).await?;
+                let (thread, user) = thread_member_args(c).await?;
                 rest(c, c.ctx.rest.add_thread_member(thread, user)).await?;
                 Ok(Value::Null)
             })
@@ -449,7 +449,7 @@ pub fn register(d: &mut Definitions) {
         "Removes a member from the thread.",
         |c| {
             Box::pin(async move {
-                let (thread, user) = thread_member_args(&c).await?;
+                let (thread, user) = thread_member_args(c).await?;
                 rest(c, c.ctx.rest.remove_thread_member(thread, user)).await?;
                 Ok(Value::Null)
             })
