@@ -81,6 +81,7 @@ is kept in `extra`. Most are user-account events a bot token does not receive.
 | Variable service: `global`/`guild`/`user` scopes, TTL, `update`, `expire`, `ttl`, prefix queries with a cursor, atomic transactions, data operations (max 100) | `VariableService`, `VariableTransaction`, `execute_operations`, over `SqliteStore` or `MemoryVariableStore` |
 | Sharding | `BotConfig::sharding` (`ShardingOptions`: ids, count or auto, leader shard, `ShardSchedulerMode`), `FLUXER_SHARD_IDS` / `FLUXER_SHARD_COUNT` / `FLUXER_SHARD_PROCESS_ID`, `BotShard` (`shard_id_for_guild`, `is_leader`, `should_start_jobs`, statuses), `HookEvent::ShardStatus` |
 | Cluster | `Cluster` (`add`, `add_runner`, `restart`, `remove`, `destroy`, entries with status / last error / metadata, lifecycle events) |
+| Music / Lavalink | `flush-music` (re-exported as `flush::music`): `MusicManager`, `MusicPlayer`, `TrackQueue`, `LavalinkNode` (WS `v4/websocket`, `v4` REST, resuming, reconnect, response cache + request coalescing), `MusicBackend` / `MusicVoiceAdapter` / `MusicAudioOutput` ports, `MockMusicBackend` for tests |
 
 ### Deferred
 
@@ -105,8 +106,9 @@ Each of these is a follow-up of its own:
    shards; `BotShard::broadcast_eval` covers the shards of one process only.
    `ShardCount::Auto` sizes from the first page of the bot's guild list.
 5. **Voice runtime** (Flush decodes voice state/server events but opens no
-   voice connection).
-6. **Music / Lavalink** integration.
-7. **Canvas / image** tooling.
-8. **Command hot reload** (`load`/`reload` of command directories) and
+   voice connection; the Fluxer-side audio bridge behind
+   `MusicAudioOutput` ships with this item, while `flush-music` already
+   covers the Lavalink client and player stack).
+6. **Canvas / image** tooling.
+7. **Command hot reload** (`load`/`reload` of command directories) and
    cron-expression schedules (the scheduler has delays and intervals only).
