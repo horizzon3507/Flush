@@ -475,6 +475,10 @@ struct ConnEntry {
 
 type VoiceListener = Arc<dyn Fn(&VoiceEvent) + Send + Sync>;
 
+fn lock<'a, T>(m: &'a Mutex<T>) -> std::sync::MutexGuard<'a, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 struct VoiceInner {
     resolved: Mutex<Option<Arc<dyn VoiceDriver>>>,
     factory: Mutex<Option<DriverFactory>>,
@@ -540,16 +544,12 @@ impl Voice {
         }
     }
 
-    fn lock<'a, T>(&self, m: &'a Mutex<T>) -> std::sync::MutexGuard<'a, T> {
-        m.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
     fn driver(&self) -> Result<Arc<dyn VoiceDriver>, VoiceError> {
-        let mut resolved = self.lock(&self.inner.resolved);
+        let mut resolved = lock(&self.inner.resolved);
         if let Some(d) = resolved.as_ref() {
             return Ok(d.clone());
         }
-        let factory = self.lock(&self.inner.factory).take();
+        let factory = lock(&self.inner.factory).take();
         let Some(factory) = factory else {
             return Err(VoiceError::Dependency(
                 "no voice driver is configured; supply one with Voice::new or Voice::lazy".into(),
@@ -562,7 +562,7 @@ impl Voice {
 
     /// Number of active connections.
     pub fn size(&self) -> usize {
-        self.lock(&self.inner.connections).len()
+        lock(&self.inner.connections).len()
     }
 
     /// Subscribes to normalized voice events. No-op when closed; the
@@ -573,7 +573,7 @@ impl Voice {
     ) -> VoiceEventGuard {
         let id = self.inner.next_listener.fetch_add(1, Ordering::Relaxed);
         if !self.inner.closed.load(Ordering::SeqCst) {
-            self.lock(&self.inner.listeners).insert(id, Arc::new(listener));
+            lock(&self.inner.listeners).insert(id, Arc::new(listener));
         }
         VoiceEventGuard {
             id,
@@ -584,19 +584,19 @@ impl Voice {
 
     /// Removes a listener registered with [`Self::subscribe`].
     pub fn unsubscribe(&self, id: u64) {
-        self.lock(&self.inner.listeners).remove(&id);
+        lock(&self.inner.listeners).remove(&id);
     }
 
     /// The channel the bot is connected to in the guild.
     pub fn channel_id(&self, guild_id: Snowflake) -> Option<Snowflake> {
-        self.lock(&self.inner.connections)
+        lock(&self.inner.connections)
             .get(&guild_id)
             .map(|e| e.channel_id)
     }
 
     /// The live connection in the guild.
     pub fn get(&self, guild_id: Snowflake) -> Option<Arc<dyn VoiceConnection>> {
-        self.lock(&self.inner.connections)
+        lock(&self.inner.connections)
             .get(&guild_id)
             .map(|e| e.connection.clone())
     }
@@ -606,7 +606,7 @@ impl Voice {
             return;
         }
         let listeners: Vec<VoiceListener> =
-            self.lock(&self.inner.listeners).values().cloned().collect();
+            lock(&self.inner.listeners).values().cloned().collect();
         for listener in listeners {
             listener(&event);
         }
@@ -617,7 +617,7 @@ impl Voice {
         if self.inner.closed.load(Ordering::SeqCst) {
             return Err(VoiceError::Closed);
         }
-        self.lock(&self.inner.connections)
+        lock(&self.inner.connections)
             .get(&guild_id)
             .map(|e| (e.channel_id, e.connection.clone()))
             .ok_or(VoiceError::NotConnected)
@@ -660,7 +660,7 @@ impl Voice {
             return Err(VoiceError::Closed);
         }
         {
-            let connections = self.lock(&self.inner.connections);
+            let connections = lock(&self.inner.connections);
             if let Some(existing) = connections.get(&gid) {
                 if existing.channel_id == channel.id {
                     return Ok(existing.connection.clone());
@@ -676,7 +676,7 @@ impl Voice {
                 .shared(),
         );
         let existing = {
-            let mut pending = self.lock(&self.inner.pending);
+            let mut pending = lock(&self.inner.pending);
             match pending.get(&gid) {
                 Some((pending_channel, _)) if *pending_channel != channel_id => {
                     return Err(VoiceError::PendingJoin);
@@ -691,9 +691,26 @@ impl Voice {
         if let Some(task) = existing {
             return task.as_ref().clone().await.map_err(|e| (*e).clone());
         }
+        // Keep the driver join alive even if every caller drops its future,
+        // and clear the pending marker once it settles: a cancelled join
+        // must not leave the guild's voice blocked.
+        async_std::task::spawn({
+            let shared = (*task).clone();
+            let task = task.clone();
+            let inner = Arc::downgrade(&self.inner);
+            async move {
+                let _ = shared.await;
+                if let Some(inner) = inner.upgrade() {
+                    let mut pending = lock(&inner.pending);
+                    if matches!(pending.get(&gid), Some((_, t)) if Arc::ptr_eq(t, &task)) {
+                        pending.remove(&gid);
+                    }
+                }
+            }
+        });
         let result = task.as_ref().clone().await;
         // Drop our pending marker only when it is still the same join.
-        let mut pending = self.lock(&self.inner.pending);
+        let mut pending = lock(&self.inner.pending);
         if let Some((_, stored)) = pending.get(&gid) {
             if Arc::ptr_eq(stored, &task) {
                 pending.remove(&gid);
@@ -727,21 +744,41 @@ impl Voice {
 
         // One callback carries every connection event, so the driver's own
         // emit order is preserved: a serverLeave emitted before disconnect
-        // is still delivered, and nothing arrives after cleanup.
-        let voice = self.clone();
+        // is still delivered, and nothing arrives after cleanup. The
+        // callback holds a weak manager reference: a live Voice owns the
+        // connection, and a strong one would keep both alive forever.
+        let weak = Arc::downgrade(&self.inner);
         let speaker = Arc::new(Mutex::new(SpeakerWindow::default()));
         let sub_id = connection.subscribe(Arc::new(move |ev| {
-            voice.on_conn_event(gid, channel_id, &speaker, ev);
+            if let Some(inner) = weak.upgrade() {
+                Voice { inner }.on_conn_event(gid, channel_id, &speaker, ev);
+            }
         }));
-        self.lock(&self.inner.connections).insert(
-            gid,
-            ConnEntry {
-                channel_id,
-                connection: connection.clone(),
-                sub_id,
-                state: SelfVoiceState::default(),
-            },
-        );
+        {
+            let mut connections = lock(&self.inner.connections);
+            if let Some(existing) = connections.get(&gid) {
+                // A racing join registered while this one was in flight:
+                // hand back per the join contract and leave the extra
+                // connection with the driver.
+                let result = if existing.channel_id == channel_id {
+                    Ok(existing.connection.clone())
+                } else {
+                    Err(Arc::new(VoiceError::AlreadyConnected))
+                };
+                drop(connections);
+                driver_leave(&driver, gid, channel_id);
+                return result;
+            }
+            connections.insert(
+                gid,
+                ConnEntry {
+                    channel_id,
+                    connection: connection.clone(),
+                    sub_id,
+                    state: SelfVoiceState::default(),
+                },
+            );
+        }
         self.publish(VoiceEvent {
             name: VoiceEventName::Ready,
             guild_id: gid,
@@ -761,8 +798,7 @@ impl Voice {
         ev: VoiceConnEvent,
     ) {
         if let VoiceConnEvent::Disconnect = ev {
-            let still_current = self
-                .lock(&self.inner.connections)
+            let still_current = lock(&self.inner.connections)
                 .get(&guild_id)
                 .map(|e| e.channel_id == channel_id)
                 .unwrap_or(false);
@@ -777,14 +813,16 @@ impl Voice {
                 error_code: None,
                 error_message: None,
             });
-            let removed = self.lock(&self.inner.connections).remove(&guild_id);
+            let removed = lock(&self.inner.connections).remove(&guild_id);
             if let Some(entry) = removed {
                 entry.connection.unsubscribe(entry.sub_id);
             }
             return;
         }
         let (name, user_id, error_code, error_message) = match ev {
-            VoiceConnEvent::Ready => (VoiceEventName::Ready, None, None, None),
+            // `do_join` publishes `voiceReady` when the connection registers;
+            // a driver that also emits ready must not announce it twice.
+            VoiceConnEvent::Ready => return,
             VoiceConnEvent::ServerLeave => (VoiceEventName::ServerLeave, None, None, None),
             VoiceConnEvent::Error { code } => (
                 VoiceEventName::Error,
@@ -830,7 +868,7 @@ impl Voice {
         let (channel_id, _) = self.connection(guild_id)?;
         let driver = self.driver()?;
         let merged = {
-            let connections = self.lock(&self.inner.connections);
+            let connections = lock(&self.inner.connections);
             let current = connections.get(&guild_id).ok_or(VoiceError::NotConnected)?;
             SelfVoiceState {
                 self_mute: self_mute.unwrap_or(current.state.self_mute),
@@ -838,7 +876,7 @@ impl Voice {
             }
         };
         driver.update_voice_state(channel_id, merged)?;
-        if let Some(e) = self.lock(&self.inner.connections).get_mut(&guild_id) {
+        if let Some(e) = lock(&self.inner.connections).get_mut(&guild_id) {
             e.state = merged;
         }
         Ok(())
@@ -862,9 +900,22 @@ impl Voice {
                 }
             }) as VoiceConnCallback
         };
-        let sub_id = connection.subscribe(capture);
+        // RAII: a cancelled `play` still unsubscribes its error listener.
+        struct SubGuard<'a> {
+            connection: &'a dyn VoiceConnection,
+            id: u64,
+        }
+        impl Drop for SubGuard<'_> {
+            fn drop(&mut self) {
+                self.connection.unsubscribe(self.id);
+            }
+        }
+        let sub = SubGuard {
+            connection: &*connection,
+            id: connection.subscribe(capture),
+        };
         let result = connection.play(source).await;
-        connection.unsubscribe(sub_id);
+        drop(sub);
         result?;
         if let Some(code) = captured.lock().unwrap_or_else(|e| e.into_inner()).take() {
             return Err(VoiceError::Driver(code));
@@ -893,15 +944,13 @@ impl Voice {
     /// connection and tells the driver. Returns `false` when there was
     /// nothing to leave.
     pub async fn leave(&self, guild_id: Snowflake) -> Result<bool, VoiceError> {
-        let pending_task = self
-            .lock(&self.inner.pending)
+        let pending_task = lock(&self.inner.pending)
             .get(&guild_id)
             .map(|(_, t)| t.clone());
         if let Some(task) = pending_task {
             let _ = task.as_ref().clone().await;
         }
-        let Some((channel_id, connection)) = self
-            .lock(&self.inner.connections)
+        let Some((channel_id, connection)) = lock(&self.inner.connections)
             .get(&guild_id)
             .map(|e| (e.channel_id, e.connection.clone()))
         else {
@@ -929,16 +978,15 @@ impl Voice {
             return Ok(());
         }
         let _guard = self.inner.closing.lock().await;
-        self.lock(&self.inner.listeners).clear();
-        let pending: Vec<PendingJoin> = self
-            .lock(&self.inner.pending)
+        lock(&self.inner.listeners).clear();
+        let pending: Vec<PendingJoin> = lock(&self.inner.pending)
             .values()
             .map(|(_, t)| t.clone())
             .collect();
         for task in pending {
             let _ = task.as_ref().clone().await;
         }
-        let guilds: Vec<Snowflake> = self.lock(&self.inner.connections).keys().copied().collect();
+        let guilds: Vec<Snowflake> = lock(&self.inner.connections).keys().copied().collect();
         let mut failures = Vec::new();
         for guild_id in guilds {
             if let Err(e) = self.leave(guild_id).await {

@@ -249,6 +249,29 @@ async fn driver_events_are_normalized_and_sanitized() {
 }
 
 #[async_std::test]
+async fn conn_level_ready_does_not_double_publish() {
+    // `do_join` already published `voiceReady`; a connection that also
+    // reports a Ready event must not emit it a second time.
+    let conn = MockConn::new();
+    let voice = Voice::new(Arc::new(MockDriver::new(conn.clone())));
+    let (_guard, collected) = collect(&voice);
+
+    voice.join(channel(300, 100), None).await.expect("join");
+    conn.emit(VoiceConnEvent::Ready);
+    conn.emit(VoiceConnEvent::Disconnect);
+
+    let events = collected
+        .events
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    assert_eq!(
+        names(&events),
+        vec![VoiceEventName::Ready, VoiceEventName::Disconnect]
+    );
+}
+
+#[async_std::test]
 async fn server_leave_before_disconnect_still_arrives() {
     let conn = MockConn::new();
     let voice = Voice::new(Arc::new(MockDriver::new(conn.clone())));
