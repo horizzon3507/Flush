@@ -5,7 +5,6 @@
 //! transactions, the journal is WAL and variable reads and queries go
 //! straight to the index instead of loading the whole state.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
@@ -439,19 +438,15 @@ impl SqliteStore {
     /// A case store file is refused: its entries would read as default
     /// settings and reset those guilds.
     pub fn import_guilds_json(&self, path: &Path) -> Result<usize, StoreError> {
-        let Some(raw) = read_json::<HashMap<String, serde_json::Value>>(path)? else {
-            return Ok(0);
-        };
-        refuse_fields(
-            &raw,
-            CASE_FIELDS,
+        let Some(guilds) = read_store_file::<GuildConfig>(
             path,
+            CASE_FIELDS,
             "moderation cases",
             "guild settings",
-        )?;
-        let guilds: HashMap<String, GuildConfig> =
-            serde_json::from_value(serde_json::Value::Object(raw.into_iter().collect()))
-                .map_err(|_| StoreError::Corrupt)?;
+        )?
+        else {
+            return Ok(0);
+        };
         self.write(|conn| {
             for (guild_id, config) in &guilds {
                 write_guild(conn, guild_id, config)?;
@@ -471,19 +466,11 @@ impl SqliteStore {
             #[serde(default)]
             next_id: u64,
         }
-        let Some(raw) = read_json::<HashMap<String, serde_json::Value>>(path)? else {
+        let Some(guilds) =
+            read_store_file::<Guild>(path, GUILD_FIELDS, "guild settings", "moderation cases")?
+        else {
             return Ok(0);
         };
-        refuse_fields(
-            &raw,
-            GUILD_FIELDS,
-            path,
-            "guild settings",
-            "moderation cases",
-        )?;
-        let guilds: HashMap<String, Guild> =
-            serde_json::from_value(serde_json::Value::Object(raw.into_iter().collect()))
-                .map_err(|_| StoreError::Corrupt)?;
         self.write(|conn| {
             let mut written = 0;
             for (guild_id, guild) in &guilds {
@@ -506,38 +493,68 @@ impl SqliteStore {
 const CASE_FIELDS: &[&str] = &["cases", "next_id"];
 const GUILD_FIELDS: &[&str] = &["prefix", "mod_log_channel_id", "bot_color", "automod"];
 
-/// Both JSON stores map a guild id to an object whose fields all have
-/// defaults, so each file parses as the other kind. The fields tell them
-/// apart.
-fn refuse_fields(
-    guilds: &HashMap<String, serde_json::Value>,
-    fields: &[&str],
+/// Reads a JSON store file: a map from guild id to `T`. Both stores use that
+/// shape with every field defaulted, so each file parses as the other kind;
+/// `other_fields` are the fields that give the other kind away. A repeated
+/// guild id or field is refused instead of keeping the last one.
+fn read_store_file<T: serde::de::DeserializeOwned>(
     path: &Path,
+    other_fields: &[&str],
     found: &str,
     wanted: &str,
-) -> Result<(), StoreError> {
-    let other_kind = guilds
-        .values()
-        .filter_map(serde_json::Value::as_object)
-        .any(|entry| fields.iter().any(|field| entry.contains_key(*field)));
+) -> Result<Option<Vec<(String, T)>>, StoreError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io(error)),
+    };
+    let Guilds(raw) = serde_json::from_str::<Guilds<serde_json::Value>>(&text)
+        .map_err(|_| StoreError::Corrupt)?;
+    let other_kind = raw
+        .iter()
+        .filter_map(|(_, entry)| entry.as_object())
+        .any(|entry| other_fields.iter().any(|field| entry.contains_key(*field)));
     if other_kind {
         return Err(StoreError::Import(format!(
             "{} holds {found}, not {wanted}",
             path.display()
         )));
     }
-    Ok(())
+    // Parsed from the text again, not from `raw`: a `Value` has already
+    // dropped repeated fields, the typed parse refuses them.
+    let Guilds(guilds) =
+        serde_json::from_str::<Guilds<T>>(&text).map_err(|_| StoreError::Corrupt)?;
+    Ok(Some(guilds))
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, StoreError> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(io(error)),
-    };
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|_| StoreError::Corrupt)
+/// A JSON object read as its entries in order, refusing a repeated key.
+struct Guilds<T>(Vec<(String, T)>);
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Guilds<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Entries<T>(std::marker::PhantomData<T>);
+        impl<'de, T: serde::Deserialize<'de>> serde::de::Visitor<'de> for Entries<T> {
+            type Value = Guilds<T>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an object keyed by guild id")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut access: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut seen = std::collections::HashSet::new();
+                let mut entries = Vec::new();
+                while let Some((key, value)) = access.next_entry::<String, T>()? {
+                    if !seen.insert(key.clone()) {
+                        return Err(serde::de::Error::custom("a guild id is repeated"));
+                    }
+                    entries.push((key, value));
+                }
+                Ok(Guilds(entries))
+            }
+        }
+        deserializer.deserialize_map(Entries(std::marker::PhantomData))
+    }
 }
 
 fn insert_case(conn: &Connection, guild_id: &str, case: &ModCase) -> Result<usize, StoreError> {
