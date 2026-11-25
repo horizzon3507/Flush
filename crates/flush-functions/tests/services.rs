@@ -182,3 +182,53 @@ async fn deferred_providers_unavailable() {
         assert_eq!(guard_code(&err), "NATIVE_UNAVAILABLE", "{call}");
     }
 }
+
+#[async_std::test]
+async fn instance_value() {
+    let ctx = ctx().await;
+    let rt = runtime();
+
+    // normalize strips a `/vN` suffix and trailing slashes.
+    assert_eq!(
+        rt.run(&ctx, "$instanceValue[normalize;https://ex.com/api/v1/]")
+            .await
+            .unwrap(),
+        "https://ex.com/api"
+    );
+    assert_eq!(
+        rt.run(&ctx, "$instanceValue[discoveryURL;https://ex.com/api/v2]")
+            .await
+            .unwrap(),
+        "https://ex.com/api/.well-known/fluxer"
+    );
+
+    // resolve with no document yields the default endpoints.
+    let out = rt.run(&ctx, "$instanceValue[resolve]").await.unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["endpoints"]["invite"], "https://fluxer.gg");
+    assert_eq!(doc["discovery"], serde_json::Value::Null);
+
+    // resolve merges a partial map and back-fills api_public from api.
+    let out = rt
+        .run(&ctx, "$instanceValue[resolve;{\"api\":\"https://x.io/api/v3\"}]")
+        .await
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["endpoints"]["api"], "https://x.io/api");
+    assert_eq!(doc["endpoints"]["api_public"], "https://x.io/api");
+    assert_eq!(doc["endpoints"]["gateway"], "wss://gateway.fluxer.app");
+
+    // parse validates the document and fills the optional sections.
+    let full = "{\"api_code_version\":1,\"endpoints\":{\"api\":\"https://a.io/api\",\"api_client\":\"https://a.io/api\",\"api_public\":\"https://api.a.io\",\"gateway\":\"wss://gw.a.io\",\"media\":\"https://cdn.a.io/\",\"static_cdn\":\"https://s.a.io\",\"marketing\":\"https://a.io\",\"admin\":\"https://adm.a.io\",\"invite\":\"https://i.gg/\",\"gift\":\"https://g.gg\",\"webapp\":\"https://w.a.io\"}}";
+    let call = format!("$instanceValue[parse;{full}]");
+    let out = rt.run(&ctx, &call).await.unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["endpoints"]["invite"], "https://i.gg");
+    assert_eq!(doc["endpoints"]["media"], "https://cdn.a.io");
+    assert_eq!(doc["features"]["voice_enabled"], true);
+
+    // parse rejects non-object input.
+    assert!(rt.run(&ctx, "$instanceValue[parse;[]]").await.is_err());
+    // unknown operation fails.
+    assert!(rt.run(&ctx, "$instanceValue[bogus;x]").await.is_err());
+}

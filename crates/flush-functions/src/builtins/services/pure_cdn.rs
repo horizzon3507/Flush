@@ -68,92 +68,248 @@ fn asset_size(value: Option<&Value>) -> Result<u32, ScriptFailure> {
     Ok(n)
 }
 
-/// `httpBase`: http(s), no credentials, query or fragment, <= 2048 chars.
-/// Returns (scheme, host[:port]).
-fn http_base(raw: &str) -> Result<(String, String), ScriptFailure> {
-    if raw.len() > 2048 {
-        return Err(cdn_error("The URL exceeds 2048 characters."));
+/// `httpBase`: http(s) URL, no credentials, query, fragment or `\`, <= 2048
+/// chars; returns the trimmed URL.
+fn http_base_str(raw: &str) -> Result<String, ScriptFailure> {
+    let raw = raw.trim();
+    if raw.len() > 2048 || raw.contains('\\') {
+        return Err(cdn_error("Invalid HTTP(S) base URL."));
     }
-    let (scheme, rest) = raw
-        .split_once("://")
-        .ok_or_else(|| cdn_error(format!("Invalid URL '{raw}'.")))?;
-    if scheme != "http" && scheme != "https" {
-        return Err(cdn_error("The URL must use http or https."));
+    let parsed = url::Url::parse(raw).map_err(|_| cdn_error("Invalid HTTP(S) base URL."))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(cdn_error(
+            "HTTP(S) base URL must not include credentials, a query or a fragment.",
+        ));
     }
-    if rest.contains('?') || rest.contains('#') {
-        return Err(cdn_error("Query strings and fragments are not allowed."));
-    }
-    let authority = rest
-        .trim_end_matches('/')
-        .split('/')
-        .next()
-        .unwrap_or_default();
-    if authority.is_empty() || authority.contains('@') {
-        return Err(cdn_error("Credentials are not allowed in the URL."));
-    }
-    if !authority.split(':').all(|part| {
-        !part.is_empty()
-            && part
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
-    }) {
-        return Err(cdn_error(format!("Invalid host in '{raw}'.")));
-    }
-    Ok((scheme.to_string(), authority.to_string()))
+    Ok(raw.to_string())
 }
 
-fn normalize_instance(value: &Value) -> Result<String, ScriptFailure> {
-    let raw = text(value);
-    let candidate = if raw.contains("://") {
-        raw
-    } else {
-        format!("https://{raw}/")
+/// `normalizeApiOrigin`: trim, strip trailing `/`, strip a `/vN` suffix.
+fn normalize_api_origin(api: &str) -> String {
+    let trimmed = api.trim().trim_end_matches('/');
+    let stripped = match trimmed.rfind('/') {
+        Some(i)
+            if trimmed[i + 1..].len() > 1
+                && trimmed[i + 1..].starts_with(['v', 'V'])
+                && trimmed[i + 2..].chars().all(|c| c.is_ascii_digit()) =>
+        {
+            &trimmed[..i]
+        }
+        _ => trimmed,
     };
-    let (scheme, authority) = http_base(&candidate)?;
-    Ok(format!("{scheme}://{authority}"))
+    stripped.to_string()
 }
 
-fn instance_op(op: &str, value: &Value, extra: Option<&Value>) -> Result<Value, ScriptFailure> {
-    match op {
-        "normalize" => Ok(Value::String(normalize_instance(value)?)),
-        "discoveryURL" => {
-            let normalized = normalize_instance(value)?;
-            Ok(Value::String(format!("{normalized}/.well-known/fluxer")))
+/// `normalizeInviteBase`: trim, strip trailing `/`.
+fn normalize_invite_base(invite: &str) -> String {
+    invite.trim().trim_end_matches('/').to_string()
+}
+
+const ENDPOINT_KEYS: [&str; 11] = [
+    "api",
+    "api_client",
+    "api_public",
+    "gateway",
+    "media",
+    "static_cdn",
+    "marketing",
+    "admin",
+    "invite",
+    "gift",
+    "webapp",
+];
+
+fn is_object(value: &Value) -> bool {
+    value.as_object().is_some()
+}
+
+fn require_endpoint_str(
+    map: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, ScriptFailure> {
+    match map.get(key).and_then(Value::as_str) {
+        Some(s) if !s.is_empty() => Ok(s.to_string()),
+        _ => Err(cdn_error(format!(
+            "Invalid instance discovery: endpoints.{key} must be a non-empty string"
+        ))),
+    }
+}
+
+/// `parseInstanceDiscovery`: validates the document and normalizes its
+/// endpoint URLs, defaulting every optional section like yuzuha.
+fn parse_instance_discovery(raw: &Value) -> Result<Value, ScriptFailure> {
+    if !is_object(raw) {
+        return Err(cdn_error("Invalid instance discovery: expected an object"));
+    }
+    match raw.get("api_code_version").and_then(Value::as_f64) {
+        Some(v) if v.is_finite() => {}
+        _ => {
+            return Err(cdn_error(
+                "Invalid instance discovery: api_code_version must be a number",
+            ))
         }
-        "parse" => {
-            let normalized = normalize_instance(value)?;
-            let (_, host) = http_base(&normalized)?;
-            let host = host.split(':').next().unwrap_or_default().to_string();
-            Ok(json!({ "endpoint": normalized, "instanceDomain": host }))
+    }
+    let endpoints_raw = match raw.get("endpoints").and_then(Value::as_object) {
+        Some(e) => e,
+        None => {
+            return Err(cdn_error(
+                "Invalid instance discovery: endpoints must be an object",
+            ))
         }
-        "resolve" => {
-            let endpoint = normalize_instance(value)?;
-            let mut out = serde_json::Map::new();
-            let keys = [
-                "api",
-                "gateway",
-                "cdn",
-                "staticCdn",
-                "invite",
-                "gift",
-                "development",
-                "apiDocs",
-                "status",
-                "support",
-            ];
-            let raw = extra.cloned().unwrap_or(Value::Null);
-            for key in keys {
-                let path = raw
-                    .get(key)
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| sdk_data::instance_endpoints().get(key).cloned())
-                    .unwrap_or_default();
-                out.insert(key.to_string(), json!(format!("{endpoint}{path}")));
+    };
+    let mut endpoints = serde_json::Map::new();
+    for key in ENDPOINT_KEYS {
+        endpoints.insert(
+            key.to_string(),
+            Value::String(require_endpoint_str(endpoints_raw, key)?),
+        );
+    }
+    for key in ["api", "api_client", "api_public"] {
+        let v = normalize_api_origin(endpoints[key].as_str().unwrap_or_default());
+        endpoints.insert(key.to_string(), Value::String(v));
+    }
+    let invite = normalize_invite_base(endpoints["invite"].as_str().unwrap_or_default());
+    endpoints.insert("invite".into(), Value::String(invite));
+    for key in ["media", "static_cdn"] {
+        let v = endpoints[key]
+            .as_str()
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        endpoints.insert(key.to_string(), Value::String(v));
+    }
+    let mut out = serde_json::Map::new();
+    out.insert("api_code_version".into(), raw["api_code_version"].clone());
+    out.insert("endpoints".into(), Value::Object(endpoints));
+    let defaults: [(&str, Value); 10] = [
+        (
+            "captcha",
+            json!({"provider":"none","hcaptcha_site_key":null,"turnstile_site_key":null}),
+        ),
+        (
+            "features",
+            json!({"voice_enabled":true,"stripe_enabled":false,"self_hosted":false,"presigned_attachment_uploads":false,"emails_enabled":false}),
+        ),
+        (
+            "gif",
+            json!({"provider":"none","display_name":"","attribution_required":false}),
+        ),
+        (
+            "sso",
+            json!({"enabled":false,"enforced":false,"display_name":null,"redirect_uri":""}),
+        ),
+        (
+            "registration",
+            json!({"mode":"open","admin_registration_urls_enabled":false}),
+        ),
+        (
+            "community",
+            json!({"single_community":false,"single_community_guild_id":null,"direct_messages_disabled":false}),
+        ),
+        (
+            "services",
+            json!({"gif_enabled":false,"youtube_enabled":false,"bluesky_enabled":false}),
+        ),
+        (
+            "limits",
+            json!({"version":2,"traitDefinitions":[],"rules":[],"defaultsHash":""}),
+        ),
+        ("push", json!({"public_vapid_key":null})),
+        ("app_public", json!({})),
+    ];
+    for (key, default) in defaults {
+        out.insert(key.to_string(), raw.get(key).cloned().unwrap_or(default));
+    }
+    Ok(Value::Object(out))
+}
+
+/// `resolveInstanceEndpoints`: defaults, or a full discovery document, or a
+/// partial `{key: url}` map merged over the defaults.
+fn resolve_instance_endpoints(input: Option<&Value>) -> Result<Value, ScriptFailure> {
+    let Some(input) = input else {
+        return Ok(json!({
+            "endpoints": sdk_data::instance_endpoints(),
+            "discovery": Value::Null,
+        }));
+    };
+    let is_full = input.get("endpoints").map(is_object).unwrap_or(false)
+        && input
+            .get("api_code_version")
+            .and_then(Value::as_f64)
+            .is_some();
+    if is_full {
+        let discovery = parse_instance_discovery(input)?;
+        return Ok(json!({
+            "endpoints": discovery["endpoints"].clone(),
+            "discovery": discovery,
+        }));
+    }
+    let partial = match input {
+        Value::Object(map) => map,
+        _ => return Err(cdn_error("Invalid instance endpoints.")),
+    };
+    let mut merged: serde_json::Map<String, Value> = sdk_data::instance_endpoints()
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    for key in ENDPOINT_KEYS {
+        if let Some(v) = partial.get(key).and_then(Value::as_str) {
+            if !v.is_empty() {
+                merged.insert(key.to_string(), Value::String(v.to_string()));
             }
-            Ok(Value::Object(out))
         }
-        _ => Err(cdn_error(format!("Unknown sdkInstance operation '{op}'."))),
+    }
+    for key in ["api", "api_client", "api_public"] {
+        let v = normalize_api_origin(merged[key].as_str().unwrap_or_default());
+        merged.insert(key.to_string(), Value::String(v));
+    }
+    if partial
+        .get("api")
+        .and_then(Value::as_str)
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+        && partial
+            .get("api_public")
+            .and_then(Value::as_str)
+            .map(|s| s.is_empty())
+            .unwrap_or(true)
+    {
+        merged.insert("api_public".into(), merged["api"].clone());
+    }
+    let invite = normalize_invite_base(merged["invite"].as_str().unwrap_or_default());
+    merged.insert("invite".into(), Value::String(invite));
+    for key in ["media", "static_cdn"] {
+        let v = merged[key]
+            .as_str()
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        merged.insert(key.to_string(), Value::String(v));
+    }
+    Ok(json!({
+        "endpoints": Value::Object(merged),
+        "discovery": Value::Null,
+    }))
+}
+
+fn instance_value(op: &str, value: Option<&Value>) -> Result<Value, ScriptFailure> {
+    match op {
+        "normalize" | "discoveryURL" => {
+            let url = http_base_str(&text(value.unwrap_or(&Value::Null)))?;
+            Ok(Value::String(if op == "normalize" {
+                normalize_api_origin(&url)
+            } else {
+                format!("{}/.well-known/fluxer", normalize_api_origin(&url))
+            }))
+        }
+        "parse" => parse_instance_discovery(value.unwrap_or(&Value::Null)),
+        "resolve" => resolve_instance_endpoints(value),
+        _ => Err(cdn_error(format!("Unknown instance operation '{op}'."))),
     }
 }
 
@@ -324,26 +480,21 @@ pub fn register(d: &mut Definitions) {
     );
 
     d.add(
-        "sdkInstance",
-        "util",
+        "instanceValue",
+        "sdk",
         1,
-        3,
-        "[operação;valor?;endpoints?]",
-        "Instance helpers (normalize, discoveryURL, parse, resolve).",
+        2,
+        "[operação;valor?]",
+        "Computes instance values without network discovery: normalize/discoveryURL (base URL), parse (document), resolve (document or partial endpoints; defaults when omitted).",
         |c| {
             Box::pin(async move {
                 let op = c.arg(0).await?;
                 let value = if c.arg_count() > 1 {
-                    support::json_arg(&c.arg(1).await?)
-                } else {
-                    Value::Null
-                };
-                let extra = if c.arg_count() > 2 {
-                    Some(support::json_arg(&c.arg(2).await?))
+                    Some(support::json_arg(&c.arg(1).await?))
                 } else {
                     None
                 };
-                instance_op(&op, &value, extra.as_ref())
+                instance_value(&op, value.as_ref())
             })
         },
     );
