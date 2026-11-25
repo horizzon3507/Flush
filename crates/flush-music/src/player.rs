@@ -296,7 +296,12 @@ impl MusicPlayer {
 
     /// A page of up to `count` tracks starting at `start`.
     pub fn queue_page(&self, start: usize, count: usize) -> MusicResult<Vec<MusicTrack>> {
-        self.tracks.lock().unwrap().slice(start, count)
+        let tracks = self.tracks.lock().unwrap();
+        let remaining = tracks.len().saturating_sub(start);
+        if remaining == 0 {
+            return Ok(Vec::new());
+        }
+        tracks.slice(start, count.min(remaining))
     }
 
     pub fn remove(&self, index: usize, count: usize) -> MusicResult<Vec<MusicTrack>> {
@@ -368,11 +373,10 @@ impl MusicPlayer {
                 Err(MusicError::new("MUSIC_CLOSED", "The player is closed."))
             });
         }
-        let pending = self.pending.clone();
+        // The pending slot is released by the actor when the operation
+        // finishes, so a dropped reply future cannot leak capacity.
         Box::pin(async move {
-            let result = rx.await;
-            pending.fetch_sub(1, Ordering::SeqCst);
-            match result {
+            match rx.await {
                 Ok(value) => value,
                 Err(_) => Err(MusicError::new("MUSIC_CLOSED", "The player is closed.")),
             }
@@ -588,30 +592,38 @@ impl PlayerActor {
             match op {
                 Op::Play(reply) => {
                     let _ = reply.send(self.handle_play().await);
+                    self.release_pending();
                 }
                 Op::Skip(reply) => {
                     let _ = reply.send(self.handle_skip().await);
+                    self.release_pending();
                 }
                 Op::Stop {
                     clear_queue,
                     reply,
                 } => {
                     let _ = reply.send(self.handle_stop(clear_queue).await);
+                    self.release_pending();
                 }
                 Op::Pause { paused, reply } => {
                     let _ = reply.send(self.handle_pause(paused).await);
+                    self.release_pending();
                 }
                 Op::SetVolume { volume, reply } => {
                     let _ = reply.send(self.handle_volume(volume).await);
+                    self.release_pending();
                 }
                 Op::Seek { position, reply } => {
                     let _ = reply.send(self.handle_seek(position).await);
+                    self.release_pending();
                 }
                 Op::SetFilters { filters, reply } => {
                     let _ = reply.send(self.handle_filters(filters).await);
+                    self.release_pending();
                 }
                 Op::Connect { channel_id, reply } => {
                     let _ = reply.send(self.handle_connect(channel_id).await);
+                    self.release_pending();
                 }
                 Op::Recover(reply) => {
                     let _ = reply.send(self.handle_recover().await);
@@ -622,14 +634,19 @@ impl PlayerActor {
                     let _ = reply.send(());
                 }
                 Op::Destroy(reply) => {
-                    let _ = reply.send(Ok(self.handle_destroy().await));
+                    let failures = self.handle_destroy().await;
                     if let Some(release) = self.release.lock().unwrap().take() {
                         release();
                     }
+                    let _ = reply.send(Ok(failures));
                     return;
                 }
             }
         }
+    }
+
+    fn release_pending(&self) {
+        self.player.pending.fetch_sub(1, Ordering::SeqCst);
     }
 
     fn shared(&self) -> std::sync::RwLockReadGuard<'_, SharedState> {
@@ -711,7 +728,10 @@ impl PlayerActor {
             PLAYBACK_MARKER.to_string(),
             serde_json::Value::String(playback_id.clone()),
         );
-        let state = self
+        // Publish the in-flight marker before the PATCH lands: Lavalink may
+        // send events for the new playback while the request is in flight.
+        self.shared_write().sequence = self.sequence;
+        let state = match self
             .update(MusicPlayerUpdate {
                 track: Some(UpdateTrack::Encoded {
                     encoded: Some(track.encoded.clone()),
@@ -721,7 +741,15 @@ impl PlayerActor {
                 end_time: Some(None),
                 ..Default::default()
             })
-            .await?;
+            .await
+        {
+            Ok(state) => state,
+            Err(error) => {
+                self.sequence -= 1;
+                self.shared_write().sequence = self.sequence;
+                return Err(error);
+            }
+        };
         self.commit_queue(&track, dequeue, requeue);
         let mut shared = self.shared_write();
         shared.current = Some(track.clone());

@@ -198,13 +198,15 @@ impl Inner {
     }
 
     fn emit(&self, event: MusicEvent) {
-        for (_, listener) in self.listeners.lock().unwrap().iter() {
+        let listeners = self.listeners.lock().unwrap().clone();
+        for (_, listener) in listeners {
             listener(event.clone());
         }
     }
 
     fn emit_lifecycle(&self, event: MusicNodeEvent) {
-        for (_, listener) in self.lifecycle.lock().unwrap().iter() {
+        let listeners = self.lifecycle.lock().unwrap().clone();
+        for (_, listener) in listeners {
             listener(event.clone());
         }
     }
@@ -256,6 +258,7 @@ impl LavalinkNode {
         let parsed = url::Url::parse(&options.url)
             .map_err(|_| MusicError::new("LAVALINK_OPTIONS", "Provide a valid HTTP(S) Lavalink URL."))?;
         if !matches!(parsed.scheme(), "http" | "https")
+            || !options.url.contains("://")
             || !parsed.username().is_empty()
             || parsed.password().is_some()
             || parsed.query().is_some()
@@ -520,38 +523,45 @@ impl LavalinkNode {
                 None => {
                     let inner = self.inner.clone();
                     let key = identifier.to_string();
+                    let remove_key = key.clone();
                     let identifier = identifier.to_string();
-                    let task: Shared<BoxFuture<'static, MusicResult<TrackLoadResult>>> = (async move {
-                        let path = format!("v4/loadtracks?identifier={}", encode(&identifier));
-                        let result = request(&inner, "GET", &path, None).await;
-                        match result {
-                            Ok(value) => {
-                                let parsed = parse_load_result(&value);
-                                if let (Ok(parsed), Some(cache)) = (&parsed, inner.cache_opts) {
-                                    if !matches!(parsed, TrackLoadResult::Error(_)) {
-                                        cache_insert(&inner, &identifier, parsed.clone(), cache);
+                    let task: Shared<BoxFuture<'static, MusicResult<TrackLoadResult>>> = task::spawn(
+                        async move {
+                            let path =
+                                format!("v4/loadtracks?identifier={}", encode(&identifier));
+                            let result = request(&inner, "GET", &path, None).await;
+                            let parsed = match result {
+                                Ok(value) => {
+                                    let parsed = parse_load_result(&value);
+                                    if let (Ok(parsed), Some(cache)) = (&parsed, inner.cache_opts)
+                                    {
+                                        if !matches!(parsed, TrackLoadResult::Error(_)) {
+                                            cache_insert(
+                                                &inner,
+                                                &identifier,
+                                                parsed.clone(),
+                                                cache,
+                                            );
+                                        }
                                     }
+                                    parsed
                                 }
-                                parsed
-                            }
-                            Err(error) => Err(error),
-                        }
-                    })
-                                    .boxed()
-                        .shared();
+                                Err(error) => Err(error),
+                            };
+                            inner.loading.lock().unwrap().remove(&remove_key);
+                            parsed
+                        },
+                    )
+                    .boxed()
+                    .shared();
                     loading.insert(key, task.clone());
                     task
                 }
             }
         };
         self.inner.load_waiters.fetch_add(1, Ordering::SeqCst);
-        let result = shared.await;
-        self.inner.load_waiters.fetch_sub(1, Ordering::SeqCst);
-        {
-            let mut loading = self.inner.loading.lock().unwrap();
-            loading.remove(identifier);
-        }
-        result
+        let _waiter = SlotGuard(&self.inner.load_waiters);
+        shared.await
     }
 
     fn cache_get(&self, identifier: &str) -> Option<TrackLoadResult> {
@@ -779,7 +789,6 @@ impl LavalinkNode {
             return Err(MusicError::new(code, message));
         }
         let (abort, registration) = AbortHandle::new_pair();
-        let _ = &registration;
         self.inner
             .audio_streams
             .lock()
@@ -791,40 +800,48 @@ impl LavalinkNode {
         let body = response.take_body();
         task::spawn(async move {
             let mut tx = tx;
-            let mut reader = body.into_reader().take((inner.max_bytes + 1) as u64);
-            let mut buf = vec![0u8; 16 * 1024];
-            let result: MusicResult<()> = loop {
-                let read = timeout(inner.audio_idle_timeout, reader.read(&mut buf)).await;
-                match read {
-                    Err(_) => {
-                        break Err(MusicError::new(
-                            "LAVALINK_AUDIO_TIMEOUT",
-                            "The audio output stopped providing data.",
-                        ))
-                    }
-                    Ok(Err(_)) => {
-                        break Err(MusicError::new(
-                            "LAVALINK_AUDIO_CONNECTION",
-                            "The Lavalink audio connection was interrupted.",
-                        ))
-                    }
-                    Ok(Ok(0)) => break Ok(()),
-                    Ok(Ok(n)) => {
-                        if n > MAX_AUDIO_CHUNK {
-                            break Err(MusicError::new(
-                                "LAVALINK_AUDIO_LIMIT",
-                                "Audio chunk exceeds 1 MiB.",
-                            ));
+            let stream_inner = inner.clone();
+            let reader = Abortable::new(
+                async move {
+                    let mut reader = body.into_reader();
+                    let mut buf = vec![0u8; 16 * 1024];
+                    let result: MusicResult<()> = loop {
+                        let read =
+                            timeout(stream_inner.audio_idle_timeout, reader.read(&mut buf)).await;
+                        match read {
+                            Err(_) => {
+                                break Err(MusicError::new(
+                                    "LAVALINK_AUDIO_TIMEOUT",
+                                    "The audio output stopped providing data.",
+                                ))
+                            }
+                            Ok(Err(_)) => {
+                                break Err(MusicError::new(
+                                    "LAVALINK_AUDIO_CONNECTION",
+                                    "The Lavalink audio connection was interrupted.",
+                                ))
+                            }
+                            Ok(Ok(0)) => break Ok(()),
+                            Ok(Ok(n)) => {
+                                if n > MAX_AUDIO_CHUNK {
+                                    break Err(MusicError::new(
+                                        "LAVALINK_AUDIO_LIMIT",
+                                        "Audio chunk exceeds 1 MiB.",
+                                    ));
+                                }
+                                if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
+                                    break Ok(());
+                                }
+                            }
                         }
-                        if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
-                            break Ok(());
-                        }
+                    };
+                    if let Err(error) = result {
+                        let _ = tx.send(Err(error)).await;
                     }
-                }
-            };
-            if let Err(error) = result {
-                let _ = tx.send(Err(error)).await;
-            }
+                },
+                registration,
+            );
+            let _ = reader.await;
             inner.audio_streams.lock().unwrap().remove(&guild);
         });
         let abort_for_close = abort.clone();
@@ -945,6 +962,15 @@ fn cache_insert(inner: &Inner, identifier: &str, value: TrackLoadResult, opts: C
     cache.bytes += bytes;
 }
 
+/// Releases one slot of an `AtomicUsize` counter on drop.
+struct SlotGuard<'a>(&'a AtomicUsize);
+
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// One REST request with pending caps, timeout and response limits.
 async fn request(
     inner: &Arc<Inner>,
@@ -963,9 +989,8 @@ async fn request(
     }
     inner.requests.fetch_add(1, Ordering::SeqCst);
     inner.pending.fetch_add(1, Ordering::SeqCst);
-    let result = request_inner(inner, method, path, body).await;
-    inner.pending.fetch_sub(1, Ordering::SeqCst);
-    result
+    let _slot = SlotGuard(&inner.pending);
+    request_inner(inner, method, path, body).await
 }
 
 async fn request_inner(
@@ -1068,7 +1093,14 @@ fn parse_load_result(value: &Value) -> MusicResult<TrackLoadResult> {
         MusicError::new("LAVALINK_PROTOCOL", "Invalid load result from Lavalink.")
     })?;
     if let TrackLoadResult::Empty(data) = &result {
-        if !data.is_none() && !data.as_ref().map(|v| v.is_null()).unwrap_or(true) {
+        // Lavalink v4 sends `"data": {}` (or `null`) for an empty result.
+        let valid = match data.as_ref() {
+            None => true,
+            Some(Value::Null) => true,
+            Some(Value::Object(map)) => map.is_empty(),
+            _ => false,
+        };
+        if !valid {
             return Err(MusicError::new(
                 "LAVALINK_PROTOCOL",
                 "Invalid load result from Lavalink.",
@@ -1404,7 +1436,7 @@ async fn connect_once(inner: Arc<Inner>) -> MusicResult<()> {
     *inner.socket_abort.lock().unwrap() = Some(abort);
     let reader_inner = inner.clone();
     let reader = Abortable::new(
-        task::spawn(socket_loop(reader_inner.clone(), ws, ready_tx)),
+        socket_loop(reader_inner.clone(), ws, ready_tx),
         registration,
     );
     task::spawn(async move {

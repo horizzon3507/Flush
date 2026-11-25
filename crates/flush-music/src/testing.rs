@@ -98,7 +98,8 @@ impl MockMusicBackend {
 
     /// Deliver an event to every subscriber (as the node would).
     pub fn emit(&self, event: MusicEvent) {
-        for (_, listener) in self.listeners.lock().unwrap().iter() {
+        let listeners = self.listeners.lock().unwrap().clone();
+        for (_, listener) in listeners {
             listener(event.clone());
         }
     }
@@ -116,7 +117,8 @@ impl MockMusicBackend {
             }
             _ => {}
         }
-        for (_, listener) in self.lifecycle_listeners.lock().unwrap().iter() {
+        let listeners = self.lifecycle_listeners.lock().unwrap().clone();
+        for (_, listener) in listeners {
             listener(event.clone());
         }
     }

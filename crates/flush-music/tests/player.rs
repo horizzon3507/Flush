@@ -1,13 +1,13 @@
 //! MusicManager / MusicPlayer / TrackQueue over MockMusicBackend (loopback only).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_std::task;
 
 use flush_music::{
-    mock_track, LoopMode, MockMusicBackend, MusicEvent, MusicManager, MusicManagerOptions,
+    mock_track, LoopMode, MockMusicBackend, MusicBackend, MusicEvent, MusicManager, MusicManagerOptions,
     MusicNodeEvent, MusicPlayerOptions, TrackEndReason, TrackLoadResult, TrackQueue, UpdateTrack,
     PLAYBACK_MARKER,
 };
@@ -247,4 +247,97 @@ async fn recovery_after_fresh_session() {
 
     manager.close().await.unwrap();
     assert_eq!(manager.len(), 0);
+}
+
+#[async_std::test]
+async fn early_track_event_during_update_is_accepted() {
+    let node = MockMusicBackend::new();
+    let manager = manager(node.clone());
+    let player = manager
+        .create_player("g1", MusicPlayerOptions::default())
+        .unwrap();
+    player
+        .enqueue(vec![mock_track("t1"), mock_track("t2")])
+        .unwrap();
+
+    // Lavalink may deliver a track event while the PATCH is still in flight.
+    let emitter = node.clone();
+    let fired = Arc::new(AtomicBool::new(false));
+    let flag = fired.clone();
+    *node.before_update.lock().unwrap() = Some(Arc::new(move |_guild, update| {
+        if flag.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if let Some(UpdateTrack::Encoded {
+            user_data: Some(user_data),
+            ..
+        }) = &update.track
+        {
+            let marker = user_data
+                .get(PLAYBACK_MARKER)
+                .and_then(|value| value.as_str())
+                .unwrap()
+                .to_string();
+            emitter.emit(ended("t1", &marker, TrackEndReason::LoadFailed));
+        }
+    }));
+    player.play().await.unwrap();
+    player.drain().await;
+    // The early LoadFailed advanced the queue to t2.
+    assert_eq!(last_encoded(&node).as_deref(), Some("t2"));
+    assert_eq!(player.current().unwrap().info.identifier, "t2");
+}
+
+#[async_std::test]
+async fn dropped_reply_futures_do_not_leak_control_slots() {
+    let node = MockMusicBackend::new();
+    let manager = manager(node.clone());
+    let player = manager
+        .create_player(
+            "g1",
+            MusicPlayerOptions {
+                max_pending_controls: Some(1),
+                ..MusicPlayerOptions::default()
+            },
+        )
+        .unwrap();
+    drop(player.pause(true));
+    drop(player.set_volume(20));
+    player.drain().await;
+    player.set_volume(50).await.unwrap();
+    player.skip().await.unwrap();
+    player.destroy().await;
+}
+
+#[async_std::test]
+async fn partial_queue_pages_and_reentrant_emit() {
+    let node = MockMusicBackend::new();
+    let manager = manager(node.clone());
+    let player = manager
+        .create_player("g1", MusicPlayerOptions::default())
+        .unwrap();
+    player
+        .enqueue(vec![mock_track("t1"), mock_track("t2")])
+        .unwrap();
+    // A page larger than the queue returns what is queued, not an error.
+    assert_eq!(player.queue_page(0, 10).unwrap().len(), 2);
+    assert_eq!(player.queue_page(1, 10).unwrap().len(), 1);
+    assert!(player.queue_page(5, 10).unwrap().is_empty());
+
+    // A listener may emit again (or unsubscribe) from inside a dispatch.
+    let emitter = node.clone();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let once = Arc::new(AtomicBool::new(false));
+    let hits_in_listener = hits.clone();
+    let _subscription = MusicBackend::subscribe(
+        node.as_ref(),
+        Arc::new(move |_event| {
+            hits_in_listener.fetch_add(1, Ordering::SeqCst);
+            if !once.swap(true, Ordering::SeqCst) {
+                emitter.emit(ended("t2", "m:2", TrackEndReason::Finished));
+            }
+        }),
+    );
+    node.emit(ended("t1", "m:1", TrackEndReason::Finished));
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
 }

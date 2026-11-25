@@ -218,7 +218,7 @@ pub struct LowPassFilter {
 /// One track in a player update: either an encoded track (or `null` to stop)
 /// or an identifier for Lavalink to resolve.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
+#[serde(untagged, rename_all_fields = "camelCase")]
 pub enum UpdateTrack {
     Encoded {
         encoded: Option<String>,

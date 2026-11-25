@@ -189,13 +189,15 @@ async fn lavalink_rest_routes() {
     let players = node.get_players().await.unwrap();
     assert_eq!(players[0].guild_id, "g1");
 
+    let mut user_data = flush_music::Extra::new();
+    user_data.insert("marker".to_string(), json!("p:1"));
     let player = node
         .update_player(
             "g1",
             MusicPlayerUpdate {
                 track: Some(UpdateTrack::Encoded {
                     encoded: Some("abc".to_string()),
-                    user_data: None,
+                    user_data: Some(user_data),
                 }),
                 ..MusicPlayerUpdate::default()
             },
@@ -208,12 +210,26 @@ async fn lavalink_rest_routes() {
 
     let log = log.lock().unwrap();
     assert!(log.iter().all(|seen| seen.auth.as_deref() == Some("pw")));
-    assert!(log
+    let patch = log
         .iter()
-        .any(|seen| seen.method == "PATCH" && seen.path == "/v4/sessions/s1/players/g1?noReplace=false"));
+        .find(|seen| seen.method == "PATCH" && seen.path == "/v4/sessions/s1/players/g1?noReplace=false")
+        .expect("player PATCH recorded");
+    let patch_body: Value = serde_json::from_slice(&patch.body).unwrap();
+    assert_eq!(patch_body["track"]["userData"]["marker"], json!("p:1"));
     assert!(log
         .iter()
         .any(|seen| seen.method == "DELETE" && seen.path == "/v4/sessions/s1/players/g1"));
+}
+
+#[async_std::test]
+async fn lavalink_rejects_malformed_url_without_panicking() {
+    let options = LavalinkOptions {
+        url: "http:/localhost:2333".to_string(),
+        password: "pw".to_string(),
+        user_id: "1".to_string(),
+        ..LavalinkOptions::default()
+    };
+    assert!(LavalinkNode::new(options).is_err());
 }
 
 #[async_std::test]

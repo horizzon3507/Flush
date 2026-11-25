@@ -196,10 +196,16 @@ impl MusicManager {
                         });
                     }
                     MusicNodeEvent::Disconnect { code } => {
-                        for player in inner.players.lock().unwrap().values() {
-                            if Arc::ptr_eq(player.node(), &target) {
-                                player.emit(PlayerEvent::NodeDisconnect(code));
-                            }
+                        let players: Vec<Arc<MusicPlayer>> = inner
+                            .players
+                            .lock()
+                            .unwrap()
+                            .values()
+                            .filter(|player| Arc::ptr_eq(player.node(), &target))
+                            .cloned()
+                            .collect();
+                        for player in players {
+                            player.emit(PlayerEvent::NodeDisconnect(code));
                         }
                     }
                     MusicNodeEvent::Ready { .. } | MusicNodeEvent::Closed => {}
@@ -294,7 +300,8 @@ impl MusicManager {
             self.inner.options.audio.clone(),
             Arc::new(move |error| {
                 if let (Some(inner), Some(handler)) = (weak.upgrade(), on_error.as_ref()) {
-                    if let Some(player) = inner.players.lock().unwrap().get(&guild).cloned() {
+                    let player = inner.players.lock().unwrap().get(&guild).cloned();
+                    if let Some(player) = player {
                         handler(error, player);
                     }
                 }
