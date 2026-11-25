@@ -30,7 +30,7 @@ fn read_store(path: &Path) -> Result<Store, CliError> {
     if !path.is_file() {
         return Err(CliError::new("DATA_FORMAT", "Pass an existing store file."));
     }
-    match serde_json::from_str(&std::fs::read_to_string(path)?) {
+    match serde_json::from_slice(&std::fs::read(path)?) {
         Ok(Value::Object(store)) => Ok(store),
         _ => Err(CliError::new(
             "STORE_CORRUPT",
@@ -39,36 +39,67 @@ fn read_store(path: &Path) -> Result<Store, CliError> {
     }
 }
 
-/// Store to restore over. A `replace` restore is how a deleted or damaged
-/// store is recovered, so there it counts as empty; `merge` needs it readable.
-fn read_restore_target(path: &Path, policy: RestorePolicy) -> Result<Store, CliError> {
-    check_extension(path)?;
-    match read_store(path) {
-        Err(error)
-            if policy == RestorePolicy::Replace
-                && matches!(error.code.as_str(), "DATA_FORMAT" | "STORE_CORRUPT")
-                && !path.is_dir() =>
-        {
-            Ok(Store::new())
-        }
-        other => other,
+/// Kind the framework's own file names imply (`cases.json`, `guilds.json`).
+fn kind_from_name(path: &Path) -> Option<&'static str> {
+    match path.file_stem().and_then(|stem| stem.to_str()) {
+        Some("cases") => Some("cases"),
+        Some("guilds") => Some("guilds"),
+        _ => None,
     }
 }
 
 /// `cases` when every guild entry holds a `cases` list, otherwise `guilds`.
-/// An empty store has no entries to tell, so its file name decides.
+/// An empty store has no entries to tell.
+fn kind_from_entries(store: &Store) -> Option<&'static str> {
+    if store.is_empty() {
+        return None;
+    }
+    let cases = store
+        .values()
+        .all(|entry| entry.get("cases").is_some_and(Value::is_array));
+    Some(if cases { "cases" } else { "guilds" })
+}
+
+/// Kind of a readable store: its entries decide, then its file name.
 fn kind(store: &Store, path: &Path) -> &'static str {
-    let cases = if store.is_empty() {
-        path.file_stem().is_some_and(|stem| stem == "cases")
-    } else {
-        store
-            .values()
-            .all(|entry| entry.get("cases").is_some_and(Value::is_array))
+    kind_from_entries(store)
+        .or_else(|| kind_from_name(path))
+        .unwrap_or("guilds")
+}
+
+/// Store to restore over, with the kind a backup must have to go into it
+/// (`None` when neither the file name nor the contents tell).
+///
+/// A `replace` restore is how a deleted or damaged store is recovered, so
+/// there anything unreadable counts as empty. `merge` keeps the existing
+/// entries, so they have to be readable by the bot.
+fn read_restore_target(
+    path: &Path,
+    policy: RestorePolicy,
+) -> Result<(Store, Option<&'static str>), CliError> {
+    check_extension(path)?;
+    if path.is_dir() {
+        return Err(CliError::new("DATA_FORMAT", "The store must be a file."));
+    }
+    let store = match read_store(path) {
+        Ok(store) => store,
+        Err(error) if error.code == "DATA_FORMAT" => Store::new(),
+        Err(error) if error.code == "STORE_CORRUPT" && policy == RestorePolicy::Replace => {
+            Store::new()
+        }
+        Err(error) => return Err(error),
     };
-    if cases {
-        "cases"
-    } else {
-        "guilds"
+    let expected = kind_from_name(path).or_else(|| kind_from_entries(&store));
+    let unreadable = expected.and_then(|kind| invalid_entry(kind, &store));
+    match (unreadable, policy) {
+        (None, _) => Ok((store, expected)),
+        (Some(_), RestorePolicy::Replace) => Ok((Store::new(), expected)),
+        (Some(guild), RestorePolicy::Merge) => Err(CliError::new(
+            "STORE_CORRUPT",
+            format!(
+                "The store entry for guild {guild} is unreadable; restore with --policy replace."
+            ),
+        )),
     }
 }
 
@@ -96,31 +127,27 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Checks every entry the way the stores read them: one entry the bot cannot
-/// parse makes it discard the whole file on its next load.
-fn validate_entries(kind: &str, data: &Store) -> Result<(), CliError> {
-    for (guild, entry) in data {
-        let valid = if kind == "cases" {
-            entry.get("next_id").is_some_and(Value::is_u64)
-                && entry
-                    .get("cases")
-                    .and_then(Value::as_array)
-                    .is_some_and(|cases| {
-                        cases
-                            .iter()
-                            .all(|case| serde_json::from_value::<ModCase>(case.clone()).is_ok())
-                    })
-        } else {
-            serde_json::from_value::<GuildConfig>(entry.clone()).is_ok()
-        };
-        if !valid {
-            return Err(CliError::new(
-                "BACKUP_INVALID",
-                format!("The backup entry for guild {guild} is not a valid {kind} record."),
-            ));
-        }
-    }
-    Ok(())
+/// First guild whose entry the stores could not read back. One such entry
+/// makes the bot discard the whole file on its next load.
+fn invalid_entry<'a>(kind: &str, data: &'a Store) -> Option<&'a str> {
+    data.iter()
+        .find(|(_, entry)| {
+            let valid = if kind == "cases" {
+                entry.get("next_id").is_some_and(Value::is_u64)
+                    && entry
+                        .get("cases")
+                        .and_then(Value::as_array)
+                        .is_some_and(|cases| {
+                            cases
+                                .iter()
+                                .all(|case| serde_json::from_value::<ModCase>(case.clone()).is_ok())
+                        })
+            } else {
+                serde_json::from_value::<GuildConfig>((*entry).clone()).is_ok()
+            };
+            !valid
+        })
+        .map(|(guild, _)| guild.as_str())
 }
 
 fn read_backup(path: &Path) -> Result<(String, Store), CliError> {
@@ -141,7 +168,12 @@ fn read_backup(path: &Path) -> Result<(String, Store), CliError> {
         value.get("data"),
     ) {
         (Some(1), Some(kind @ ("guilds" | "cases")), Some(Value::Object(data))) => {
-            validate_entries(kind, data)?;
+            if let Some(guild) = invalid_entry(kind, data) {
+                return Err(CliError::new(
+                    "BACKUP_INVALID",
+                    format!("The backup entry for guild {guild} is not a valid {kind} record."),
+                ));
+            }
             Ok((kind.to_owned(), data.clone()))
         }
         _ => Err(invalid(
@@ -165,9 +197,9 @@ pub fn data_command(
     apply: bool,
     policy: RestorePolicy,
 ) -> Result<Value, CliError> {
-    let store = match operation {
+    let (store, expected) = match operation {
         DataOperation::Restore => read_restore_target(input, policy)?,
-        _ => read_store(input)?,
+        _ => (read_store(input)?, None),
     };
     match operation {
         DataOperation::Stats => Ok(stats(&store, input, std::fs::metadata(input)?.len())),
@@ -203,12 +235,12 @@ pub fn data_command(
         DataOperation::Restore => {
             let file = file.ok_or_else(|| CliError::new("USAGE", "Restore needs --file."))?;
             let (backup_kind, data) = read_backup(file)?;
-            // Only entries can clash: an empty side fits either kind.
-            let store_kind = kind(&store, input);
-            if !store.is_empty() && !data.is_empty() && backup_kind != store_kind {
+            // Checked even when one side is empty: the bot cannot read the
+            // other kind, and an empty backup would still wipe the store.
+            if let Some(expected) = expected.filter(|expected| *expected != backup_kind) {
                 return Err(CliError::new(
                     "BACKUP_INVALID",
-                    format!("The backup holds {backup_kind} but the store holds {store_kind}."),
+                    format!("The backup holds {backup_kind} but the store holds {expected}."),
                 ));
             }
             let before = store.len();
@@ -379,6 +411,79 @@ mod tests {
         let restored = run(DataOperation::Restore, true).unwrap();
         assert_eq!(restored["kind"], "cases");
         assert_eq!(restored["guilds_after"], 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_backup_of_the_other_kind_never_goes_in() {
+        let dir = temp("kinds");
+        let store = dir.join("cases.json");
+        let backup = dir.join("backup.json");
+        let restore = |policy| {
+            data_command(DataOperation::Restore, &store, Some(&backup), true, policy)
+                .map_err(|error| error.code)
+        };
+        let invalid = Err("BACKUP_INVALID".to_owned());
+
+        // An empty guild-settings backup must not wipe a populated case store.
+        std::fs::write(&backup, r#"{"version":1,"kind":"guilds","data":{}}"#).unwrap();
+        std::fs::write(&store, cases()).unwrap();
+        assert_eq!(restore(RestorePolicy::Replace), invalid);
+        assert_eq!(restore(RestorePolicy::Merge), invalid);
+        assert_eq!(std::fs::read_to_string(&store).unwrap(), cases());
+
+        // Nor may guild settings land in an empty or missing case store.
+        std::fs::write(
+            &backup,
+            r#"{"version":1,"kind":"guilds","data":{"1":{"prefix":"?"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(&store, "{}").unwrap();
+        assert_eq!(restore(RestorePolicy::Replace), invalid);
+        std::fs::remove_file(&store).unwrap();
+        assert_eq!(restore(RestorePolicy::Replace), invalid);
+        assert!(!store.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn replace_restore_ignores_whatever_is_unreadable_in_the_store() {
+        let dir = temp("unreadable");
+        let store = dir.join("cases.json");
+        let backup = dir.join("backup.json");
+        std::fs::write(&store, cases()).unwrap();
+        data_command(
+            DataOperation::Backup,
+            &store,
+            Some(&backup),
+            false,
+            RestorePolicy::Replace,
+        )
+        .unwrap();
+        let restore = |policy| {
+            data_command(DataOperation::Restore, &store, Some(&backup), true, policy)
+                .map(|report| report["guilds_after"].clone())
+                .map_err(|error| error.code)
+        };
+        let damaged: [&[u8]; 2] = [
+            b"\xff\xfe not utf-8",
+            br#"{"1":{"next_id":2,"cases":[{"id":"one"}]}}"#,
+        ];
+        for content in damaged {
+            std::fs::write(&store, content).unwrap();
+            assert_eq!(
+                restore(RestorePolicy::Merge),
+                Err("STORE_CORRUPT".to_owned())
+            );
+            assert_eq!(std::fs::read(&store).unwrap(), content);
+            assert_eq!(restore(RestorePolicy::Replace), Ok(json!(2)));
+            assert_eq!(
+                std::fs::read_to_string(&store)
+                    .map(|text| text.contains("spam"))
+                    .ok(),
+                Some(true)
+            );
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
