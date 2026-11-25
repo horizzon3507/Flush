@@ -13,6 +13,12 @@ Each release heading is the version and date (`## v0.1.1 · 17/10/2026`); under 
 
 </details>
 
+## Unreleased
+
+- **CLI**: new `flush-cli` crate with the `flush` binary, ported from Yuzuha's CLI: `init` (with the `simple`, `moderation` and `entertainment` templates and `--local`), `templates`, `check` (`--build` compiles the project), `doctor`, `data stats|backup|restore` for the JSON stores, `run` and `dev` (rebuilds and restarts on source, config or `.env` changes; a failed build keeps the running version). Commands that wait on function mode, sharding or the SQLite store answer `UNSUPPORTED`. See `docs/CLI.md`.
+- **Framework — project config**: `ProjectConfig` reads `flush.toml`, `load_env` / `read_env_file` / `parse_env` read `.env`, and `bot_from_project` builds a `Bot` from both.
+- `CommandError::Internal` now prints `internal: ...` (it was still `interno: ...`).
+
 ## v0.2.0 · 19/11/2026
 
 First parity release against `@fluxerjs` 3.3.0 and Yuzuha 0.8.0, and the whole project is now in English. This version was made for the Flush lib on 19/11/2026 (v0.2.0).
@@ -24,9 +30,12 @@ First parity release against `@fluxerjs` 3.3.0 and Yuzuha 0.8.0, and the whole p
 - **Framework — typed arguments**: `Args` parses user, role and channel mentions, integers, booleans and durations (`1h30m`) with `ArgError` describing what was expected.
 - **Framework — middleware**: `Bot::middleware()` runs `Middleware` before each command; `Guard` and `guild_only` cover the common cases.
 - **Framework — collectors and scheduler**: `Bot::collectors()` awaits messages or reactions with filters and timeouts; `Bot::scheduler()` runs one-shot and interval jobs with cancellation.
+- **Framework — variables and SQLite**: `VariableService` stores JSON values in `global`, `guild` and `user` scopes with TTL, prefix queries and atomic transactions; `SqliteStore` (feature `sqlite`, on by default) keeps variables, cases and guild configuration in one WAL database and imports the JSON stores.
 - **Framework — hooks**: `HookEvent::Raw` delivers every gateway event; exhaustive matches on `HookEvent` need a new arm. Thread channels are cached like regular channels.
+- **Framework — store lock**: `GuildStore` and `CaseStore` hold a shared `StoreLock` on `<store>.lock` while they are open, and `StoreLock::try_exclusive` lets a tool that replaces the file refuse to run under a live bot.
+- **Breaking**: `CaseStore::add` and `CaseStore::revert_warn` return `io::Result`, so a case that could not be written is an error instead of an id that was never saved.
 - **Breaking**: `MessageType` 99 now decodes as `ClientSystem` instead of `Unknown`; forum and media channels are no longer `is_text_bearing()`.
-- `docs/PARITY.md` lists what matches and what is deferred to follow-up releases (script language, CLI, SQLite store, sharding, voice, music, canvas, attachment uploads).
+- `docs/PARITY.md` lists what matches and what is deferred to follow-up releases (script language, CLI, sharding, voice, music, canvas, attachment uploads).
 
 ## v0.1.4 · 19/10/2026
 

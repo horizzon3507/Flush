@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::store_lock::StoreLock;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoModConfig {
     #[serde(default)]
@@ -100,11 +102,33 @@ pub struct GuildConfigPatch {
     pub bot_color: Option<Option<u32>>,
 }
 
-fn default_data_dir() -> PathBuf {
-    std::env::var("FLUSH_DATA_DIR")
-        .or_else(|_| std::env::var("SOUR_DATA_DIR"))
+impl GuildConfig {
+    /// Applies a patch with the store's normalization (trimmed prefix of at
+    /// most 3 characters, empty channel id clears the mod log).
+    pub fn apply(&mut self, patch: GuildConfigPatch) {
+        if let Some(p) = patch.prefix {
+            let p = p.trim().to_owned();
+            if !p.is_empty() {
+                self.prefix = p.chars().take(3).collect();
+            }
+        }
+        if let Some(id) = patch.mod_log_channel_id {
+            self.mod_log_channel_id = id.filter(|s| !s.is_empty());
+        }
+        if let Some(c) = patch.bot_color {
+            self.bot_color = c;
+        }
+    }
+}
+
+/// `FLUSH_DATA_DIR` (then `SOUR_DATA_DIR`), else `data`. Read as an OS
+/// string so every store agrees on paths that are not UTF-8.
+pub(crate) fn default_data_dir() -> PathBuf {
+    ["FLUSH_DATA_DIR", "SOUR_DATA_DIR"]
+        .into_iter()
+        .find_map(|name| std::env::var_os(name).filter(|dir| !dir.is_empty()))
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("data"))
+        .unwrap_or_else(|| PathBuf::from("data"))
 }
 
 /// Store with an in-memory cache + atomic writes (mirrors Sour).
@@ -112,11 +136,20 @@ fn default_data_dir() -> PathBuf {
 pub struct GuildStore {
     path: PathBuf,
     cache: Option<HashMap<String, GuildConfig>>,
+    _lock: Option<StoreLock>,
 }
 
 impl GuildStore {
+    /// Opens the store and marks it as in use (see [`StoreLock`]) until it is
+    /// dropped. Waits while a tool is replacing the file. A lock that cannot
+    /// be taken (a read-only directory, say) leaves the store unlocked.
     pub fn new(path: PathBuf) -> Self {
-        Self { path, cache: None }
+        let lock = StoreLock::shared(&path).ok();
+        Self {
+            path,
+            cache: None,
+            _lock: lock,
+        }
     }
 
     pub fn default_path() -> PathBuf {
@@ -136,20 +169,17 @@ impl GuildStore {
         guild_id.map(|g| self.get(g).prefix).unwrap_or_default()
     }
 
+    /// Prefix saved for this guild, `None` when the guild has no stored settings.
+    pub fn stored_prefix(&mut self, guild_id: &str) -> Option<String> {
+        self.load()
+            .get(guild_id)
+            .map(|config| config.prefix.clone())
+            .filter(|prefix| !prefix.is_empty())
+    }
+
     pub fn update(&mut self, guild_id: &str, patch: GuildConfigPatch) -> GuildConfig {
         let mut cfg = self.get(guild_id);
-        if let Some(p) = patch.prefix {
-            let p = p.trim().to_owned();
-            if !p.is_empty() {
-                cfg.prefix = p.chars().take(3).collect();
-            }
-        }
-        if let Some(id) = patch.mod_log_channel_id {
-            cfg.mod_log_channel_id = id.filter(|s| !s.is_empty());
-        }
-        if let Some(c) = patch.bot_color {
-            cfg.bot_color = c;
-        }
+        cfg.apply(patch);
         let mut store = self.load().clone();
         store.insert(guild_id.to_owned(), cfg.clone());
         self.save(&store);
@@ -194,6 +224,23 @@ impl GuildStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_prefix_is_none_without_saved_settings() {
+        let dir = std::env::temp_dir().join(format!("flush-prefix-{}", std::process::id()));
+        let mut store = GuildStore::new(dir.join("guilds.json"));
+        assert_eq!(store.stored_prefix("123"), None);
+        store.update(
+            "123",
+            GuildConfigPatch {
+                prefix: Some("$".into()),
+                ..GuildConfigPatch::default()
+            },
+        );
+        assert_eq!(store.stored_prefix("123"), Some("$".into()));
+        assert_eq!(store.stored_prefix("456"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn update_roundtrip_atomic() {

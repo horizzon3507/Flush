@@ -8,7 +8,8 @@
 
 ```bash
 cargo check --workspace --all-targets
-cargo test --workspace          # 73 tests, loopback only
+cargo test --workspace          # loopback only, no outside network
+cargo test -p flush-cli --test cli -- --ignored   # after touching crates/flush-cli/templates
 cargo clippy --workspace --all-targets   # must stay at zero warnings
 FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping   # connects for real
 ```
@@ -24,8 +25,12 @@ crates/flush-core/       types: Snowflake, permissions, entities, Event::decode
 crates/flush-gateway/    WS v1: Hello/Identify/Resume/Heartbeat + GatewayClient
 crates/flush-rest/       REST /v1: discovery, Bot <token>, client.rs + resources.rs
 crates/flush-framework/  router: prefix, cooldown, args, middleware, collectors,
-                         scheduler, GuildStore, CaseStore, moderation
+                         scheduler, GuildStore, CaseStore, moderation,
+                         VariableService, SqliteStore (feature `sqlite`)
 crates/flush/            facade + examples/ping.rs (!ping round-trip, !help)
+crates/flush-cli/        `flush` binary: init/templates/check/doctor/data/run/dev;
+                         templates/ holds the generated command sources
+docs/CLI.md              CLI reference
 docs/PARITY.md           what matches @fluxerjs / Yuzuha and what is deferred
 ```
 
@@ -49,4 +54,7 @@ docs/PARITY.md           what matches @fluxerjs / Yuzuha and what is deferred
   (commands run inline on the event loop).
 - `with_mod_action` takes `ModAction { ... }` (a struct, not 10 args).
 - Update `docs/PARITY.md` when coverage changes.
+- CLI: every failure has a stable code (`CliError`); files under
+  `crates/flush-cli/templates/` are generated verbatim and must stay
+  rustfmt- and clippy-clean (the ignored `cli` test checks it).
 - Never edit `.commandcode/taste/`.
