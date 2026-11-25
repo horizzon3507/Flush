@@ -188,11 +188,16 @@ pub fn to_json(value: &Value) -> Result<Value, crate::errors::FnError> {
 
 fn scrub_non_finite(value: &Value) -> Option<Value> {
     match value {
-        Value::Number(n) => n
-            .as_f64()
-            .filter(|f| f.is_finite())
-            .and_then(Number::from_f64)
-            .map(Value::Number),
+        Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                Some(value.clone())
+            } else {
+                n.as_f64()
+                    .filter(|f| f.is_finite())
+                    .and_then(Number::from_f64)
+                    .map(Value::Number)
+            }
+        }
         Value::Array(items) => Some(Value::Array(
             items.iter().filter_map(scrub_non_finite).collect(),
         )),
