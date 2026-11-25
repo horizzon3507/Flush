@@ -1,0 +1,24 @@
+[package]
+name = "flush-functions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Flush function-mode scripting engine: parser, evaluator, registry and built-in functions"
+
+[dependencies]
+flush-core = { path = "../flush-core", version = "0.2.0" }
+flush-framework = { path = "../flush-framework", version = "0.2.0" }
+flush-rest = { path = "../flush-rest", version = "0.2.0" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+thiserror.workspace = true
+async-std.workspace = true
+futures.workspace = true
+log.workspace = true
+regex = "1"
+url.workspace = true
+surf.workspace = true
+
+[dev-dependencies]
+async-std.workspace = true
