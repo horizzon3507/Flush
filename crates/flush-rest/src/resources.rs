@@ -160,7 +160,7 @@ pub struct ThreadSearch {
 }
 
 /// Entry of `GET /users/@me/guilds`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UserGuild {
     pub id: Snowflake,
     #[serde(default)]
@@ -177,7 +177,7 @@ pub struct UserGuild {
     pub approximate_presence_count: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VanityUrl {
     #[serde(default)]
     pub code: Option<String>,
@@ -1177,6 +1177,125 @@ impl RestClient {
         audit: Option<&str>,
     ) -> Result<Value, RestError> {
         self.request(method, path, body, audit, query).await
+    }
+
+    // ---- script builtins extras (thin routes used by flush-functions) ----
+
+    /// `POST /channels/{id}/messages/purge` with `{limit, author_id?}` body.
+    pub async fn purge_messages_with(
+        &self,
+        channel: Snowflake,
+        body: Value,
+    ) -> Result<Value, RestError> {
+        self.request(
+            "POST",
+            &Routes::channel_messages_purge(channel),
+            Some(body),
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// `GET /channels/{id}/pins` → `{messages, hasMore, nextBefore}`.
+    pub async fn pinned_messages_page(
+        &self,
+        channel: Snowflake,
+        limit: u32,
+        before: Option<Snowflake>,
+    ) -> Result<Value, RestError> {
+        let mut query = format!("limit={limit}");
+        if let Some(b) = before {
+            query = format!("{query}&before={b}");
+        }
+        self.request(
+            "GET",
+            &Routes::channel_pins(channel),
+            None,
+            None,
+            Some(&query),
+        )
+        .await
+    }
+
+    /// `GET /channels/{id}/messages/{mid}/reactions/{emoji}` → `[User]` or
+    /// `{users, hasMore, nextAfter}` depending on `limit`/`after`.
+    pub async fn reaction_users_page(
+        &self,
+        channel: Snowflake,
+        message: Snowflake,
+        emoji: &str,
+        limit: u32,
+        after: Option<Snowflake>,
+    ) -> Result<Value, RestError> {
+        let mut query = format!("limit={limit}");
+        if let Some(a) = after {
+            query = format!("{query}&after={a}");
+        }
+        self.request(
+            "GET",
+            &Routes::channel_reaction_users(
+                channel,
+                message,
+                &crate::routes::encode_component(emoji),
+            ),
+            None,
+            None,
+            Some(&query),
+        )
+        .await
+    }
+
+    /// `GET /channels/{id}/messages` with `before`/`after`/`around`/`limit`.
+    pub async fn list_messages_cursor(
+        &self,
+        channel: Snowflake,
+        limit: u32,
+        before: Option<Snowflake>,
+        after: Option<Snowflake>,
+        around: Option<Snowflake>,
+    ) -> Result<Value, RestError> {
+        let mut query = format!("limit={limit}");
+        for (k, v) in [("before", before), ("after", after), ("around", around)] {
+            if let Some(v) = v {
+                query = format!("{query}&{k}={v}");
+            }
+        }
+        self.request(
+            "GET",
+            &Routes::channel_messages(channel),
+            None,
+            None,
+            Some(&query),
+        )
+        .await
+    }
+
+    /// `GET /channels/{id}/thread-members` → `[ThreadMember]` or a paged object.
+    pub async fn thread_members_page(
+        &self,
+        thread: Snowflake,
+        limit: u32,
+        after: Option<Snowflake>,
+    ) -> Result<Value, RestError> {
+        let mut query = format!("limit={limit}");
+        if let Some(a) = after {
+            query = format!("{query}&after={a}");
+        }
+        self.request(
+            "GET",
+            &Routes::channel_thread_members(thread),
+            None,
+            None,
+            Some(&query),
+        )
+        .await
+    }
+
+    /// `GET /guilds/{id}/bans/{user}` → the ban entry.
+    pub async fn ban_info(&self, guild: Snowflake, user: Snowflake) -> Result<Value, RestError> {
+        self.request("GET", &Routes::guild_ban(guild, user), None, None, None)
+            .await
     }
 }
 
