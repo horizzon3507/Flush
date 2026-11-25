@@ -1,6 +1,7 @@
 //! `flush doctor`: local checks only, never connects and never prints secrets.
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use flush_framework::{find_config, read_env_file, ProjectConfig};
@@ -140,6 +141,27 @@ fn client_check(config: &ProjectConfig) -> Check {
     check("client", status, format!("{}.", parts.join("; ")))
 }
 
+/// The directory the bot will store into: `FLUSH_DATA_DIR` from the process
+/// environment, then from `.env`, and only then the config's `data_dir`.
+/// Mirrors `bot_from_project`; relative paths resolve from the project.
+fn storage_dir(
+    config: &ProjectConfig,
+    dir: &Path,
+    process: Option<OsString>,
+    env_file: &[(String, String)],
+) -> PathBuf {
+    let chosen = process.or_else(|| {
+        env_file
+            .iter()
+            .find(|(key, _)| key == "FLUSH_DATA_DIR")
+            .map(|(_, value)| OsString::from(value))
+    });
+    match chosen.filter(|chosen| !chosen.is_empty()) {
+        Some(chosen) => dir.join(chosen),
+        None => config.data_path(dir),
+    }
+}
+
 fn storage_check(data: &Path) -> Check {
     let mut current = data.to_path_buf();
     loop {
@@ -218,16 +240,15 @@ pub fn doctor(input: Option<&Path>) -> Report {
     let mut token = std::env::var("FLUXER_BOT_TOKEN")
         .ok()
         .filter(|token| !token.trim().is_empty());
+    let env_file = read_env_file(&dir).unwrap_or_else(|_| {
+        checks.push(check("environment", Status::Warn, "Could not read .env."));
+        Vec::new()
+    });
     if token.is_none() {
-        match read_env_file(&dir) {
-            Ok(pairs) => {
-                token = pairs
-                    .into_iter()
-                    .find(|(key, value)| key == "FLUXER_BOT_TOKEN" && !value.trim().is_empty())
-                    .map(|(_, value)| value);
-            }
-            Err(_) => checks.push(check("environment", Status::Warn, "Could not read .env.")),
-        }
+        token = env_file
+            .iter()
+            .find(|(key, value)| key == "FLUXER_BOT_TOKEN" && !value.trim().is_empty())
+            .map(|(_, value)| value.clone());
     }
     checks.push(if token.is_some() {
         check(
@@ -250,7 +271,12 @@ pub fn doctor(input: Option<&Path>) -> Report {
                 format!("{} is valid; no login performed.", config.name),
             ));
             checks.push(client_check(&config));
-            checks.push(storage_check(&config.data_path(&dir)));
+            checks.push(storage_check(&storage_dir(
+                &config,
+                &dir,
+                std::env::var_os("FLUSH_DATA_DIR"),
+                &env_file,
+            )));
         }
         Err(error) => checks.push(check(
             "config",
@@ -277,6 +303,21 @@ mod tests {
         );
         assert_eq!(parse_rustc_version("rustc 1.85"), Some((1, 85)));
         assert_eq!(parse_rustc_version("nonsense"), None);
+    }
+
+    #[test]
+    fn storage_dir_follows_the_override_the_bot_uses() {
+        let config = ProjectConfig::parse("name = \"demo\"\ndata_dir = \"data\"\n").unwrap();
+        let dir = Path::new("/project");
+        let env_file = [("FLUSH_DATA_DIR".to_owned(), "from-file".to_owned())];
+        let pick = |process: Option<&str>, env_file: &[(String, String)]| {
+            storage_dir(&config, dir, process.map(OsString::from), env_file)
+        };
+        assert_eq!(pick(None, &[]), Path::new("/project/data"));
+        assert_eq!(pick(None, &env_file), Path::new("/project/from-file"));
+        assert_eq!(pick(Some("/srv/bot"), &env_file), Path::new("/srv/bot"));
+        // Set but empty: `.env` does not override it and the bot ignores it.
+        assert_eq!(pick(Some(""), &env_file), Path::new("/project/data"));
     }
 
     #[test]
