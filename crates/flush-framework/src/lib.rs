@@ -22,6 +22,7 @@ pub mod router;
 pub mod scheduler;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+pub mod store_lock;
 pub mod variables;
 
 pub use args::{parse_bool, parse_channel, parse_duration, parse_role, parse_user, ArgError, Args};
@@ -39,6 +40,7 @@ pub use router::{Bot, BotConfig, HookEvent, Hooks, NoHooks};
 pub use scheduler::{JobHandle, Scheduler};
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
+pub use store_lock::StoreLock;
 pub use variables::{
     execute_operations, MemoryVariableStore, OperationKind, ScopedVariables, StoreError,
     StoredVariable, Ttl, VariableAccess, VariableEntry, VariableError, VariableKey,

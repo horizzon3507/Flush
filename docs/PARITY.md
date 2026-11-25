@@ -65,6 +65,7 @@ Deferred; mostly user-account events a bot token does not receive:
 | Prefix commands, aliases, cooldowns, per-guild prefix | `Bot`, `Command`, `Cooldowns`, `GuildStore` |
 | Permission and hierarchy guards | `Command::required_permission`, `Moderation` |
 | Moderation with cases and mod log | `with_mod_action`, `CaseStore`, `ModAction.log_channel` |
+| Store in use by a running bot is detectable | `StoreLock` (shared while `GuildStore`/`CaseStore` are open, `try_exclusive` for whole-file replacement) |
 | Help | `Bot::enable_help()` |
 | Event hooks | `Hooks`, including `HookEvent::Raw` for every gateway event |
 | Typed arguments | `Args` (user, role, channel, integer, boolean, duration, rest) |

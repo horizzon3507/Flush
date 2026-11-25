@@ -59,6 +59,7 @@ raw payload, and `Event::wire_name()` tells them apart.
 - **`Bot::enable_help()`**: built-in `help` command listing the others (name, description, usage, aliases, required permission) from a snapshot synced in `run()`.
 - **`Bot::hooks(impl Hooks)`**: `HookEvent` with `Ready`, `GuildAdd`, `MemberJoin`, `MemberLeave`, `Message` and `Raw` (every gateway event).
 - **Mod log**: `ModAction.log_channel` receives each moderation success without a ping (errors swallowed), with the channel coming from `GuildStore.mod_log_channel_id` (`MOD_LOG_CHANNEL_ID`/env per guild).
+- **`StoreLock`**: `GuildStore` and `CaseStore` hold a shared advisory lock on `<store>.lock` while they are open. A tool that replaces a store file calls `StoreLock::try_exclusive` first and gets `None` while a bot has the store open.
 - **`VariableService`**: JSON variables in `global`, `guild` and `user` scopes with TTL (`set_with_ttl`, `expire`, `ttl`), `update`/`increment`, prefix queries with a cursor and atomic `transaction`s; runs over `MemoryVariableStore` or `SqliteStore`.
 - **`SqliteStore`** (feature `sqlite`, on by default; bundles SQLite): one WAL database for variables, cases (`add_case`, `cases_for_user`, `active_warns`, `revert_warn`) and guild configuration, plus `import_guilds_json`/`import_cases_json` to move off the JSON stores. Build with `default-features = false` to leave SQLite out.
 - Sour-style reply writers: `plain_error`, `info_block`, `mod_success`.

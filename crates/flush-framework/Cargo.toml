@@ -16,6 +16,7 @@ thiserror.workspace = true
 async-std.workspace = true
 futures.workspace = true
 log.workspace = true
+fs4.workspace = true
 rusqlite = { workspace = true, optional = true }
 
 [features]

@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::store_lock::StoreLock;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoModConfig {
     #[serde(default)]
@@ -131,11 +133,20 @@ pub(crate) fn default_data_dir() -> PathBuf {
 pub struct GuildStore {
     path: PathBuf,
     cache: Option<HashMap<String, GuildConfig>>,
+    _lock: Option<StoreLock>,
 }
 
 impl GuildStore {
+    /// Opens the store and marks it as in use (see [`StoreLock`]) until it is
+    /// dropped. Waits while a tool is replacing the file. A lock that cannot
+    /// be taken (a read-only directory, say) leaves the store unlocked.
     pub fn new(path: PathBuf) -> Self {
-        Self { path, cache: None }
+        let lock = StoreLock::shared(&path).ok();
+        Self {
+            path,
+            cache: None,
+            _lock: lock,
+        }
     }
 
     pub fn default_path() -> PathBuf {

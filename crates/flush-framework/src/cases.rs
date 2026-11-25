@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::store_lock::StoreLock;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CaseType {
@@ -92,11 +94,20 @@ fn default_path() -> PathBuf {
 pub struct CaseStore {
     path: PathBuf,
     cache: Option<HashMap<String, GuildCases>>,
+    _lock: Option<StoreLock>,
 }
 
 impl CaseStore {
+    /// Opens the store and marks it as in use (see [`StoreLock`]) until it is
+    /// dropped. Waits while a tool is replacing the file. A lock that cannot
+    /// be taken (a read-only directory, say) leaves the store unlocked.
     pub fn new(path: PathBuf) -> Self {
-        Self { path, cache: None }
+        let lock = StoreLock::shared(&path).ok();
+        Self {
+            path,
+            cache: None,
+            _lock: lock,
+        }
     }
 
     pub fn with_default_path() -> Self {
