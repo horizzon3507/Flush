@@ -27,6 +27,9 @@ pub enum StoreError {
     Closed,
     #[error("storage failure: {0}")]
     Backend(String),
+    /// A file handed to an import holds another kind of data.
+    #[error("{0}; nothing was imported")]
+    Import(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -244,9 +247,9 @@ impl<S: VariableStore + ?Sized> VariableStore for Arc<S> {
     }
 }
 
-type MemoryMap = BTreeMap<(VariableScope, String, String), (String, StoredVariable)>;
+type MemoryMap = BTreeMap<MemoryKey, (String, StoredVariable)>;
 
-fn memory_key(key: &VariableKey) -> (VariableScope, String, String) {
+fn memory_key(key: &VariableKey) -> MemoryKey {
     (key.scope, key.subject.clone(), key.name_key())
 }
 
@@ -263,6 +266,63 @@ impl MemoryVariableStore {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, MemoryMap> {
         self.map.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+type MemoryKey = (VariableScope, String, String);
+
+/// The map during a transaction. Writes go straight to it and the entries
+/// they replace are kept, so a transaction costs what it touches instead of
+/// a copy of the store; dropping it without `commit` puts them back.
+struct MemoryDraft<'a> {
+    map: &'a mut MemoryMap,
+    replaced: Vec<(MemoryKey, Option<(String, StoredVariable)>)>,
+}
+
+impl MemoryDraft<'_> {
+    fn commit(mut self) {
+        self.replaced.clear();
+    }
+}
+
+impl Drop for MemoryDraft<'_> {
+    fn drop(&mut self) {
+        while let Some((key, before)) = self.replaced.pop() {
+            match before {
+                Some(entry) => self.map.insert(key, entry),
+                None => self.map.remove(&key),
+            };
+        }
+    }
+}
+
+impl VariableAccess for MemoryDraft<'_> {
+    fn get(&mut self, key: &VariableKey) -> Result<Option<StoredVariable>, StoreError> {
+        VariableAccess::get(self.map, key)
+    }
+    fn set(
+        &mut self,
+        key: &VariableKey,
+        value: &Value,
+        expires_at: Option<u64>,
+    ) -> Result<(), StoreError> {
+        let stored = StoredVariable {
+            value: value.clone(),
+            expires_at,
+        };
+        let key_in_map = memory_key(key);
+        let before = self
+            .map
+            .insert(key_in_map.clone(), (key.name.clone(), stored));
+        self.replaced.push((key_in_map, before));
+        Ok(())
+    }
+    fn delete(&mut self, key: &VariableKey) -> Result<(), StoreError> {
+        let key_in_map = memory_key(key);
+        if let Some(before) = self.map.remove(&key_in_map) {
+            self.replaced.push((key_in_map, Some(before)));
+        }
+        Ok(())
     }
 }
 
@@ -323,9 +383,12 @@ impl VariableStore for MemoryVariableStore {
 
     fn transact(&self, body: &mut TransactionBody<'_>) -> Result<(), VariableError> {
         let mut guard = self.lock();
-        let mut draft = guard.clone();
+        let mut draft = MemoryDraft {
+            map: &mut guard,
+            replaced: Vec::new(),
+        };
         body(&mut draft)?;
-        *guard = draft;
+        draft.commit();
         Ok(())
     }
 
