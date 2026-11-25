@@ -4,7 +4,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use flush_framework::{GuildConfig, ModCase};
+use flush_framework::{GuildConfig, ModCase, StoreLock};
 use serde_json::{json, Map, Value};
 
 use crate::arguments::{DataOperation, RestorePolicy};
@@ -260,12 +260,18 @@ pub fn data_command(
                 }
             };
             if apply {
+                // A running bot keeps its stores in memory and writes them
+                // back whole, which would undo the restore.
+                let Some(_lock) = StoreLock::try_exclusive(input)? else {
+                    return Err(CliError::new(
+                        "STORE_IN_USE",
+                        "The store is open in a running bot. Stop the bot, then restore again.",
+                    ));
+                };
                 write_atomic(input, &restored)?;
             }
-            // A running bot keeps its stores in memory and writes them back
-            // whole, so it must be down while the file is replaced.
             let note = if apply {
-                "Restored. If the bot was running, stop it and restore again: it can overwrite this file from memory."
+                "Restored. Start the bot again to load it."
             } else {
                 "Dry run: nothing was written. Stop the bot, then pass --apply to restore."
             };
@@ -420,6 +426,40 @@ mod tests {
         let restored = run(DataOperation::Restore, true).unwrap();
         assert_eq!(restored["kind"], "cases");
         assert_eq!(restored["guilds_after"], 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn restore_is_refused_while_a_bot_has_the_store_open() {
+        let dir = temp("in-use");
+        let store = dir.join("cases.json");
+        let backup = dir.join("backup.json");
+        std::fs::write(&store, cases()).unwrap();
+        data_command(
+            DataOperation::Backup,
+            &store,
+            Some(&backup),
+            false,
+            RestorePolicy::Replace,
+        )
+        .unwrap();
+        std::fs::write(&store, "{}").unwrap();
+        let restore = |apply, policy| {
+            data_command(DataOperation::Restore, &store, Some(&backup), apply, policy)
+                .map(|report| report["guilds_after"].clone())
+                .map_err(|error| error.code)
+        };
+
+        let open = flush_framework::CaseStore::new(store.clone());
+        let in_use = Err("STORE_IN_USE".to_owned());
+        assert_eq!(restore(true, RestorePolicy::Replace), in_use);
+        assert_eq!(restore(true, RestorePolicy::Merge), in_use);
+        assert_eq!(std::fs::read_to_string(&store).unwrap(), "{}");
+        // A dry run writes nothing, so it needs no lock.
+        assert_eq!(restore(false, RestorePolicy::Replace), Ok(json!(2)));
+
+        drop(open);
+        assert_eq!(restore(true, RestorePolicy::Replace), Ok(json!(2)));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

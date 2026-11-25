@@ -184,7 +184,9 @@ when it does not exist yet. The kind is checked against the store's file name
 (`cases.json`, `guilds.json`) even when one side is empty.
 
 Stop the bot before `restore --apply`. A running bot keeps its stores in
-memory and writes them back whole, so it can overwrite a restore made under it.
+memory and writes them back whole, which would undo the restore, so while a
+bot has the store open the command fails with `STORE_IN_USE` and writes
+nothing. Open stores hold a lock on `<store>.lock`, next to the store.
 
 ## Not ported yet
 
