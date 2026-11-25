@@ -53,7 +53,7 @@ async fn ctx() -> Arc<ScriptContext> {
 
 fn runtime() -> Runtime {
     let rt = Runtime::new();
-    rt.register_all(define_functions(|d| register_builtins(d)))
+    rt.register_all(define_functions(register_builtins))
         .unwrap();
     rt
 }
@@ -94,7 +94,7 @@ async fn call_limit() {
         calls: 3,
         ..DEFAULT_LIMITS
     });
-    rt.register_all(define_functions(|d| register_builtins(d)))
+    rt.register_all(define_functions(register_builtins))
         .unwrap();
     // `$let[a;$let[b;$get[a]]]` chains 3 calls; one more tips over.
     let err = rt
@@ -109,7 +109,7 @@ async fn depth_limit() {
         depth: 2,
         ..DEFAULT_LIMITS
     });
-    rt.register_all(define_functions(|d| register_builtins(d)))
+    rt.register_all(define_functions(register_builtins))
         .unwrap();
     let err = rt.run(&ctx().await, "$get[$get[$get[$get[a]]]]").await;
     assert!(err.is_err());

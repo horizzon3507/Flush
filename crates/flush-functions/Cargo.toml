@@ -11,12 +11,15 @@ flush-core = { path = "../flush-core", version = "0.2.0" }
 flush-framework = { path = "../flush-framework", version = "0.2.0" }
 flush-rest = { path = "../flush-rest", version = "0.2.0" }
 serde.workspace = true
-serde_json = { workspace = true, features = ["float_roundtrip"] }
+serde_json = { workspace = true, features = ["float_roundtrip", "preserve_order"] }
 thiserror.workspace = true
 async-std.workspace = true
 futures.workspace = true
 log.workspace = true
 regex = "1"
+num-bigint = "0.4"
+num-traits = "0.2"
+rand = "0.9"
 url.workspace = true
 surf.workspace = true
 
