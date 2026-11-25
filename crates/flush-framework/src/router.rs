@@ -119,7 +119,7 @@ pub struct Bot {
     shared: Arc<RwLock<Shared>>,
     presence_idx: usize,
     hooks: Option<Arc<dyn Hooks>>,
-    help: Option<Arc<crate::help::Help>>,
+    help: Arc<std::sync::Mutex<Option<Arc<crate::help::Help>>>>,
     middleware: Vec<Arc<dyn crate::middleware::Middleware>>,
     collectors: crate::collector::Collectors,
     scheduler: crate::scheduler::Scheduler,
@@ -150,7 +150,7 @@ impl Bot {
             })),
             presence_idx: 0,
             hooks: None,
-            help: None,
+            help: Arc::new(std::sync::Mutex::new(None)),
             middleware: Vec::new(),
             collectors: crate::collector::Collectors::new(),
             scheduler: crate::scheduler::Scheduler::new(),
@@ -224,10 +224,18 @@ impl Bot {
 
     /// Registers the built-in `help` command, which lists the other commands.
     /// The snapshot is synced in `run()` and after each `load`/`reload`.
-    pub fn enable_help(mut self) -> Self {
-        if self.help.is_none() {
-            let h = Arc::new(crate::help::Help::new());
-            self.help = Some(h.clone());
+    pub fn enable_help(self) -> Self {
+        let created = {
+            let mut slot = self.help.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                let h = Arc::new(crate::help::Help::new());
+                *slot = Some(h.clone());
+                Some(h)
+            } else {
+                None
+            }
+        };
+        if let Some(h) = created {
             let _ = self.commands.add(Box::new(crate::help::HelpCmd(h)));
         }
         self
@@ -235,7 +243,8 @@ impl Bot {
 
     /// Syncs the `help` snapshot (called internally by `run()`).
     pub fn refresh_help(&self) {
-        if let Some(h) = &self.help {
+        let slot = self.help.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(h) = slot.as_ref() {
             h.refresh(&self.commands.snapshot());
         }
     }

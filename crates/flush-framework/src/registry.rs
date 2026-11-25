@@ -140,16 +140,22 @@ impl CommandRegistry {
 #[derive(Clone)]
 pub struct CommandLoader {
     registry: Arc<CommandRegistry>,
-    help: Option<Arc<crate::help::Help>>,
+    // A shared slot, not a captured copy: help enabled on the bot after this
+    // handle was created is still seen by `refresh`.
+    help: Arc<Mutex<Option<Arc<crate::help::Help>>>>,
 }
 
 impl CommandLoader {
-    pub(crate) fn new(registry: Arc<CommandRegistry>, help: Option<Arc<crate::help::Help>>) -> Self {
+    pub(crate) fn new(
+        registry: Arc<CommandRegistry>,
+        help: Arc<Mutex<Option<Arc<crate::help::Help>>>>,
+    ) -> Self {
         Self { registry, help }
     }
 
     fn refresh(&self) {
-        if let Some(help) = &self.help {
+        let slot = self.help.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(help) = slot.as_ref() {
             help.refresh(&self.registry.snapshot());
         }
     }
@@ -194,6 +200,7 @@ impl CommandLoader {
 mod tests {
     use super::*;
     use crate::command::{CommandCtx, CommandResult};
+    use std::future::Future;
 
     struct Stub(&'static str, Vec<String>);
 
@@ -210,7 +217,7 @@ mod tests {
         fn execute<'a>(
             &'a self,
             _ctx: CommandCtx<'a>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        ) -> std::pin::Pin<Box<dyn Future<Output = CommandResult> + Send + 'a>> {
             Box::pin(async move { Ok(()) })
         }
     }
@@ -262,6 +269,19 @@ mod tests {
             .reload("b", vec![Box::new(Stub("two", vec!["one".into()]))])
             .unwrap_err();
         assert_eq!(names_of(&registry), ["one"]);
+    }
+
+    #[test]
+    fn loader_sees_help_enabled_after_its_creation() {
+        let registry = Arc::new(CommandRegistry::new());
+        let slot = Arc::new(Mutex::new(None));
+        let loader = CommandLoader::new(registry, slot.clone());
+        // `enable_help` runs after `loader()` on the bot: the handle must
+        // still sync the snapshot.
+        let help = Arc::new(crate::help::Help::new());
+        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(help.clone());
+        loader.load("a", vec![stub("one")]).unwrap();
+        assert_eq!(help.snapshot_names(), ["one"]);
     }
 
     #[test]

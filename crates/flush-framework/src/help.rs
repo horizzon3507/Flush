@@ -46,6 +46,12 @@ impl Help {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn snapshot_names(&self) -> Vec<String> {
+        let list = self.snapshot.lock().unwrap_or_else(|e| e.into_inner());
+        list.iter().map(|c| c.name.clone()).collect()
+    }
+
     fn detail(list: &[CommandInfo], query: &str) -> Option<String> {
         let lower = query.to_lowercase();
         let c = list.iter().find(|c| {
