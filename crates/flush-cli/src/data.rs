@@ -134,14 +134,14 @@ fn invalid_entry<'a>(kind: &str, data: &'a Store) -> Option<&'a str> {
         .find(|(_, entry)| {
             let valid = if kind == "cases" {
                 entry.get("next_id").is_some_and(Value::is_u64)
-                    && entry
-                        .get("cases")
-                        .and_then(Value::as_array)
-                        .is_some_and(|cases| {
+                    // The bot reads a missing `cases` as an empty list.
+                    && entry.get("cases").is_none_or(|cases| {
+                        cases.as_array().is_some_and(|cases| {
                             cases
                                 .iter()
                                 .all(|case| serde_json::from_value::<ModCase>(case.clone()).is_ok())
                         })
+                    })
             } else {
                 serde_json::from_value::<GuildConfig>((*entry).clone()).is_ok()
             };
@@ -427,6 +427,19 @@ mod tests {
         assert_eq!(restored["kind"], "cases");
         assert_eq!(restored["guilds_after"], 0);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_guild_without_a_case_list_is_readable() {
+        let store = |text: &str| serde_json::from_str::<Store>(text).unwrap();
+        assert_eq!(
+            invalid_entry("cases", &store(r#"{"1":{"next_id":1}}"#)),
+            None
+        );
+        assert_eq!(
+            invalid_entry("cases", &store(r#"{"1":{"next_id":1,"cases":null}}"#)),
+            Some("1")
+        );
     }
 
     #[test]
