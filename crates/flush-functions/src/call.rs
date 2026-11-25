@@ -2,6 +2,7 @@
 //! yuzuha's evaluator `call` object: `arg`, `fresh`, `text`, `all`,
 //! `checkOutput`, `wait`).
 
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use crate::ast::CallNode;
@@ -98,7 +99,7 @@ impl<'a> ScriptCall<'a> {
     /// `wait(future)`: pause the deadline while awaiting outside work.
     pub async fn wait<F, T>(&self, future: F) -> Result<T, ScriptFailure>
     where
-        F: std::future::Future<Output = Result<T, ScriptFailure>> + Send,
+        F: Future<Output = Result<T, ScriptFailure>> + Send,
     {
         let started = std::time::Instant::now();
         let result = future.await;
