@@ -541,9 +541,9 @@ mod tests {
         assert_eq!(error.code, "INTERRUPTED");
         let pid = std::fs::read_to_string(&pid_file).unwrap();
         // A killed process nobody reaped yet still has a pid: `Z` is dead.
-        let alive = || {
+        let alive = |pid: &str| {
             let state = Command::new("ps")
-                .args(["-o", "stat=", "-p", pid.trim()])
+                .args(["-o", "stat=", "-p", pid])
                 .stderr(Stdio::null())
                 .output()
                 .unwrap()
@@ -551,10 +551,12 @@ mod tests {
             !matches!(state.trim_ascii().first(), None | Some(b'Z'))
         };
         let deadline = Instant::now() + Duration::from_secs(5);
-        while alive() && Instant::now() < deadline {
+        while alive(pid.trim()) && Instant::now() < deadline {
             std::thread::sleep(POLL);
         }
-        assert!(!alive());
+        assert!(!alive(pid.trim()));
+        // Proves `ps` answers here: no output must mean the process is gone.
+        assert!(alive(&std::process::id().to_string()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
