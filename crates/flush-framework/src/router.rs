@@ -342,6 +342,8 @@ impl Bot {
                     self.rotate_presence(&mut gw).await;
                 }
             }
+            // Driver events must not wait for the next gateway dispatch.
+            self.drain_voice_events().await;
         }
     }
 
@@ -400,6 +402,7 @@ impl Bot {
                     }
                 }
             }
+            self.drain_voice_events().await;
         }
     }
 
@@ -430,20 +433,19 @@ impl Bot {
             Event::VoiceStateUpdate(state) => self.voice_states.apply(state),
             Event::VoiceStateAck(ack) => {
                 if let Some(state) = &ack.canonical_state {
-                    self.voice_states.apply(state);
+                    // The nested state may omit guild_id; the ack carries it.
+                    self.voice_states.apply_with_guild(state, ack.guild_id);
                 }
             }
             Event::Ready(r) => {
+                // The snapshot is authoritative: an empty list clears
+                // members who left while the bot was disconnected.
                 for g in &r.guilds {
-                    if !g.voice_states.is_empty() {
-                        self.voice_states.sync_guild(g.id, &g.voice_states);
-                    }
+                    self.voice_states.sync_guild(g.id, &g.voice_states);
                 }
             }
             Event::GuildCreate(g) => {
-                if !g.voice_states.is_empty() {
-                    self.voice_states.sync_guild(g.id, &g.voice_states);
-                }
+                self.voice_states.sync_guild(g.id, &g.voice_states);
             }
             Event::GuildDelete { id, .. } => self.voice_states.clear(Some(*id)),
             Event::ChannelDelete(c) => {
