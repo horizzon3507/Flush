@@ -76,7 +76,7 @@ pub struct DefaultReactionEmoji {
 }
 
 /// Thread listing returned by active/archived/search endpoints.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ThreadsListing {
     #[serde(default, deserialize_with = "null_vec")]
     pub threads: Vec<Channel>,

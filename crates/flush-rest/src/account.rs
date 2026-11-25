@@ -55,7 +55,7 @@ pub struct DiscoveryRequest {
     pub custom_tags: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct DiscoveryApplication {
     pub guild_id: Snowflake,
     #[serde(default)]
@@ -74,7 +74,7 @@ pub struct DiscoveryApplication {
     pub applied_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct DiscoveryStatus {
     #[serde(default)]
     pub application: Option<DiscoveryApplication>,
@@ -116,14 +116,14 @@ impl BulkMessageRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ChannelMessages {
     pub channel_id: Snowflake,
     #[serde(default, deserialize_with = "flush_core::wire::null_vec")]
     pub messages: Vec<Message>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct BulkMessagesResponse {
     #[serde(default, deserialize_with = "flush_core::wire::null_vec")]
     channels: Vec<ChannelMessages>,

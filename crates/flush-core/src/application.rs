@@ -1,12 +1,12 @@
 //! Bot application (`GET /applications/@me`, `GET /oauth2/applications/@me`).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::snowflake::Snowflake;
 use crate::user::PartialUser;
 use crate::wire::{null_bool, null_i64, null_to_none};
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Application {
     pub id: Snowflake,
     #[serde(default)]

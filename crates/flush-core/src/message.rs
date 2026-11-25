@@ -201,6 +201,8 @@ pub struct MessageSend {
     /// or per pre-uploaded file when `upload_filename` is set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sticker_ids: Vec<Snowflake>,
 }
 
 /// Attachment entry of a send payload.

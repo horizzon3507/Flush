@@ -1,13 +1,13 @@
 //! Invites (`GET /invites/{code}`, `POST /channels/{id}/invites`).
 //! Tolerant wire: event/REST fields use `default`.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::channel::Channel;
 use crate::guild::Guild;
 use crate::user::PartialUser;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Invite {
     pub code: String,
     #[serde(default, deserialize_with = "crate::wire::null_u64")]

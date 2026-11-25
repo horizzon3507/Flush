@@ -50,13 +50,13 @@ impl RestConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct DiscoveryDoc {
     #[serde(default)]
     endpoints: Option<DiscoveryEndpoints>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct DiscoveryEndpoints {
     #[serde(default)]
     api_public: Option<String>,
@@ -70,14 +70,14 @@ pub struct InstanceEndpoints {
     pub gateway: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GatewayBotInfo {
     pub url: String,
     #[serde(default)]
     pub shards: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GuildBan {
     pub user: PartialUser,
     #[serde(default)]
