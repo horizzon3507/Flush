@@ -86,7 +86,13 @@ is kept in `extra`. Most are user-account events a bot token does not receive.
 
 Each of these is a follow-up of its own:
 
-1. **Function-mode scripting language** and its ~459 built-in functions.
+1. **Function-mode builtins leftovers**: `crates/flush-functions` ships the
+   parser/evaluator runtime and every yuzuha builtin group — `language`,
+   `values`, `services`, `resources` and `entities`/`native-*` (users,
+   messages, channels, expressions, threads, roles, webhooks, invites,
+   collectors). Functions whose provider is still deferred — voice, music,
+   canvas, cache and gateway-request — report `NATIVE_UNAVAILABLE` until
+   items further down land.
 2. **CLI leftovers**. The `flush` CLI covers scaffolding, config loading and
    the run/reload lifecycle ([CLI.md](CLI.md)). What is still missing waits
    on other items of this list: `functions`, `lint`, `test`, `editor` and

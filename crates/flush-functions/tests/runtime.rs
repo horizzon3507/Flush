@@ -53,7 +53,7 @@ async fn ctx() -> Arc<ScriptContext> {
 
 fn runtime() -> Runtime {
     let rt = Runtime::new();
-    rt.register_all(define_functions(|d| register_builtins(d)))
+    rt.register_all(define_functions(register_builtins))
         .unwrap();
     rt
 }
@@ -94,7 +94,7 @@ async fn call_limit() {
         calls: 3,
         ..DEFAULT_LIMITS
     });
-    rt.register_all(define_functions(|d| register_builtins(d)))
+    rt.register_all(define_functions(register_builtins))
         .unwrap();
     // `$let[a;$let[b;$get[a]]]` chains 3 calls; one more tips over.
     let err = rt
@@ -109,8 +109,45 @@ async fn depth_limit() {
         depth: 2,
         ..DEFAULT_LIMITS
     });
-    rt.register_all(define_functions(|d| register_builtins(d)))
+    rt.register_all(define_functions(register_builtins))
         .unwrap();
     let err = rt.run(&ctx().await, "$get[$get[$get[$get[a]]]]").await;
     assert!(err.is_err());
+}
+
+#[async_std::test]
+async fn output_limit_counts_characters() {
+    let rt = Runtime::with_limits(Limits {
+        output: 4,
+        ..DEFAULT_LIMITS
+    });
+    rt.register_all(define_functions(register_builtins))
+        .unwrap();
+    // "café" is 4 characters (5 UTF-8 bytes): within budget.
+    rt.run(&ctx().await, "café").await.unwrap();
+    rt.run(&ctx().await, "caféx").await.unwrap_err();
+}
+
+#[async_std::test]
+async fn output_is_charged_once_per_node() {
+    let rt = Runtime::with_limits(Limits {
+        output: 10,
+        ..DEFAULT_LIMITS
+    });
+    rt.register_all(define_functions(register_builtins))
+        .unwrap();
+    // "a " + "bb" (the $let arg) + "bb" ($get) + " c" = 8 chars across
+    // several nodes: within budget exactly once each.
+    rt.run(&ctx().await, "a $let[x;bb]$get[x] c").await.unwrap();
+}
+
+#[async_std::test]
+async fn get_indexes_array_locals() {
+    let c = ctx().await;
+    c.vars
+        .lock()
+        .unwrap()
+        .insert("items".into(), serde_json::json!(["x", "y", "z"]));
+    let out = runtime().run(&c, "$get[items;0]").await.unwrap();
+    assert_eq!(out, "x");
 }
