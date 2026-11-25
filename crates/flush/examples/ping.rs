@@ -125,16 +125,18 @@ impl Command for Warn {
             };
             let target = ctx.target_member(mention).await?;
             let mut store = CaseStore::with_default_path();
-            let case = store.add(
-                &guild.to_string(),
-                CaseType::Warn,
-                &target
-                    .as_ref()
-                    .map(|t| t.user.id.to_string())
-                    .unwrap_or_default(),
-                &ctx.message.author.id.to_string(),
-                &reason,
-            );
+            let case = store
+                .add(
+                    &guild.to_string(),
+                    CaseType::Warn,
+                    &target
+                        .as_ref()
+                        .map(|t| t.user.id.to_string())
+                        .unwrap_or_default(),
+                    &ctx.message.author.id.to_string(),
+                    &reason,
+                )
+                .map_err(|e| CommandError::User(format!("Could not save the case: {e}")))?;
             // Log channel configured in guilds.json (MOD_LOG_CHANNEL_ID).
             let log_channel = flush_framework::GuildStore::with_default_path()
                 .get(&guild.to_string())

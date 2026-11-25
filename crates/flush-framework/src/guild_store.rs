@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::store_lock::StoreLock;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoModConfig {
     #[serde(default)]
@@ -100,7 +102,26 @@ pub struct GuildConfigPatch {
     pub bot_color: Option<Option<u32>>,
 }
 
-fn default_data_dir() -> PathBuf {
+impl GuildConfig {
+    /// Applies a patch with the store's normalization (trimmed prefix of at
+    /// most 3 characters, empty channel id clears the mod log).
+    pub fn apply(&mut self, patch: GuildConfigPatch) {
+        if let Some(p) = patch.prefix {
+            let p = p.trim().to_owned();
+            if !p.is_empty() {
+                self.prefix = p.chars().take(3).collect();
+            }
+        }
+        if let Some(id) = patch.mod_log_channel_id {
+            self.mod_log_channel_id = id.filter(|s| !s.is_empty());
+        }
+        if let Some(c) = patch.bot_color {
+            self.bot_color = c;
+        }
+    }
+}
+
+pub(crate) fn default_data_dir() -> PathBuf {
     std::env::var("FLUSH_DATA_DIR")
         .or_else(|_| std::env::var("SOUR_DATA_DIR"))
         .map(PathBuf::from)
@@ -112,11 +133,20 @@ fn default_data_dir() -> PathBuf {
 pub struct GuildStore {
     path: PathBuf,
     cache: Option<HashMap<String, GuildConfig>>,
+    _lock: Option<StoreLock>,
 }
 
 impl GuildStore {
+    /// Opens the store and marks it as in use (see [`StoreLock`]) until it is
+    /// dropped. Waits while a tool is replacing the file. A lock that cannot
+    /// be taken (a read-only directory, say) leaves the store unlocked.
     pub fn new(path: PathBuf) -> Self {
-        Self { path, cache: None }
+        let lock = StoreLock::shared(&path).ok();
+        Self {
+            path,
+            cache: None,
+            _lock: lock,
+        }
     }
 
     pub fn default_path() -> PathBuf {
@@ -138,18 +168,7 @@ impl GuildStore {
 
     pub fn update(&mut self, guild_id: &str, patch: GuildConfigPatch) -> GuildConfig {
         let mut cfg = self.get(guild_id);
-        if let Some(p) = patch.prefix {
-            let p = p.trim().to_owned();
-            if !p.is_empty() {
-                cfg.prefix = p.chars().take(3).collect();
-            }
-        }
-        if let Some(id) = patch.mod_log_channel_id {
-            cfg.mod_log_channel_id = id.filter(|s| !s.is_empty());
-        }
-        if let Some(c) = patch.bot_color {
-            cfg.bot_color = c;
-        }
+        cfg.apply(patch);
         let mut store = self.load().clone();
         store.insert(guild_id.to_owned(), cfg.clone());
         self.save(&store);
