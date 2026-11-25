@@ -59,7 +59,7 @@ pub struct Sticker {
 }
 
 /// `GET /emojis/{id}/metadata` and `GET /stickers/{id}/metadata`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ExpressionMetadata {
     pub id: Snowflake,
     #[serde(default, deserialize_with = "null_to_none")]
@@ -72,7 +72,7 @@ pub struct ExpressionMetadata {
     pub allow_cloning: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BulkFailure {
     #[serde(default)]
     pub name: String,
@@ -81,7 +81,7 @@ pub struct BulkFailure {
 }
 
 /// Result of the bulk emoji/sticker create endpoints.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(bound(deserialize = "T: Deserialize<'de>"))]
 pub struct BulkCreateResult<T> {
     #[serde(default = "Vec::new", deserialize_with = "null_vec")]

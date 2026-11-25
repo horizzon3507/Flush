@@ -160,7 +160,7 @@ pub struct ThreadSearch {
 }
 
 /// Entry of `GET /users/@me/guilds`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UserGuild {
     pub id: Snowflake,
     #[serde(default)]
@@ -177,7 +177,7 @@ pub struct UserGuild {
     pub approximate_presence_count: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VanityUrl {
     #[serde(default)]
     pub code: Option<String>,
