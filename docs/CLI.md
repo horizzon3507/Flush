@@ -197,9 +197,10 @@ wait for (see [PARITY.md](PARITY.md)):
   function-mode scripting language.
 - `run --shards` / `--shards-per-process`: the sharding and cluster runtime.
 - `run`/`dev --health-port` / `--health-host`: Flush has no health server.
-- `data cleanup` and `.sqlite`/`.db` stores: the SQLite store and the variable
-  service.
+- `data cleanup` and `.sqlite`/`.db` stores: the framework has `SqliteStore`,
+  but `flush data` reads the JSON stores only.
 - The `community`, `economy`, `utility` and `multifunctional` templates: they
-  persist state through the variable service.
+  persist state through the variable service (`VariableService`, in the
+  framework), and their commands are not ported yet.
 
 `init --js` / `--ts` do not apply: every Flush project is a Rust crate.
