@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use flush::rest::BanOptions;
 use flush::{
@@ -45,12 +46,15 @@ impl Command for Ban {
             };
             let reason = reason_from(&ctx.args, 1);
             let user = target.user.id;
-            // The case is only recorded once the action went through.
+            // The case is recorded whenever the action went through, even if
+            // the confirmation reply then fails.
             let mut cases = CaseStore::with_default_path();
             let case_id = cases.next_id(&guild.to_string());
             let rest = ctx.rest;
             let audit = reason.clone();
-            let done = with_mod_action(ModAction {
+            let acted = AtomicBool::new(false);
+            let went_through = &acted;
+            let outcome = with_mod_action(ModAction {
                 ctx: &ctx,
                 executor: ctx.member.as_ref(),
                 action: PermissionAction::Ban,
@@ -66,13 +70,16 @@ impl Command for Ban {
                         reason: Some(audit.clone()),
                         ..BanOptions::default()
                     };
-                    rest.ban(guild, user, &opts, Some(&audit))
+                    let result = rest
+                        .ban(guild, user, &opts, Some(&audit))
                         .await
-                        .map_err(|e| e.to_string())
+                        .map_err(|e| e.to_string());
+                    went_through.store(result.is_ok(), Ordering::Relaxed);
+                    result
                 },
             })
-            .await?;
-            if done {
+            .await;
+            if acted.load(Ordering::Relaxed) {
                 cases.add(
                     &guild.to_string(),
                     CaseType::Ban,
@@ -81,7 +88,7 @@ impl Command for Ban {
                     &reason,
                 );
             }
-            Ok(())
+            outcome.map(|_| ())
         })
     }
 }

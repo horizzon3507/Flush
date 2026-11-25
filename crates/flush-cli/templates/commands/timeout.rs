@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use flush::framework::parse_duration;
 use flush::{
@@ -58,12 +59,15 @@ impl Command for Timeout {
             let until = crate::util::iso_utc(crate::util::unix_now() + duration.as_secs());
             let reason = reason_from(&ctx.args, 2);
             let user = target.user.id;
-            // The case is only recorded once the action went through.
+            // The case is recorded whenever the action went through, even if
+            // the confirmation reply then fails.
             let mut cases = CaseStore::with_default_path();
             let case_id = cases.next_id(&guild.to_string());
             let rest = ctx.rest;
             let audit = reason.clone();
-            let done = with_mod_action(ModAction {
+            let acted = AtomicBool::new(false);
+            let went_through = &acted;
+            let outcome = with_mod_action(ModAction {
                 ctx: &ctx,
                 executor: ctx.member.as_ref(),
                 action: PermissionAction::Timeout,
@@ -75,14 +79,17 @@ impl Command for Timeout {
                 extra: None,
                 log_channel: mod_log_channel(guild),
                 run: || async move {
-                    rest.set_timeout(guild, user, Some(until), Some(&audit), Some(&audit))
+                    let result = rest
+                        .set_timeout(guild, user, Some(until), Some(&audit), Some(&audit))
                         .await
                         .map(|_| ())
-                        .map_err(|e| e.to_string())
+                        .map_err(|e| e.to_string());
+                    went_through.store(result.is_ok(), Ordering::Relaxed);
+                    result
                 },
             })
-            .await?;
-            if done {
+            .await;
+            if acted.load(Ordering::Relaxed) {
                 cases.add(
                     &guild.to_string(),
                     CaseType::Timeout,
@@ -91,7 +98,7 @@ impl Command for Timeout {
                     &reason,
                 );
             }
-            Ok(())
+            outcome.map(|_| ())
         })
     }
 }
