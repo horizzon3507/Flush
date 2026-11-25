@@ -56,7 +56,7 @@ pub struct ScriptContext {
     /// Dev guild IDs (for `isDevGuild` checks).
     pub dev_guilds: Vec<Snowflake>,
     pub variables: Option<Arc<Variables>>,
-    pub cases: Option<Arc<CaseStore>>,
+    pub cases: Option<Arc<Mutex<CaseStore>>>,
     pub scheduler: Option<Arc<Scheduler>>,
     pub collectors: Option<Arc<Collectors>>,
     /// Milliseconds clock (`ctx.now`) — a fn so tests can pin it.

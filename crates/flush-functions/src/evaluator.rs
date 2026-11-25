@@ -95,7 +95,9 @@ impl Evaluator {
         Ok(())
     }
 
-    fn count_output(&self, text: &str) -> Result<(), ScriptFailure> {
+    /// `checkOutput(value)`: account a builtin-produced string toward the
+    /// output limit mid-execution (as yuzuha's one-argument form does).
+    pub(crate) fn count_output(&self, text: &str) -> Result<(), ScriptFailure> {
         let next = self.output.fetch_add(text.len(), Ordering::Relaxed) + text.len();
         if next > self.limits.output {
             return Err(

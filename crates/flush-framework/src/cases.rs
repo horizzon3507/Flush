@@ -162,6 +162,14 @@ impl CaseStore {
         out
     }
 
+    /// All cases of one guild, in insertion order (ascending ids).
+    pub fn for_guild(&mut self, guild_id: &str) -> Vec<ModCase> {
+        self.load()
+            .get(guild_id)
+            .map(|g| g.cases.clone())
+            .unwrap_or_default()
+    }
+
     pub fn get(&mut self, guild_id: &str, case_id: u64) -> Option<ModCase> {
         self.load()
             .get(guild_id)?

@@ -89,6 +89,12 @@ impl<'a> ScriptCall<'a> {
         Box::pin(self.text(0, separator)).await
     }
 
+    /// `checkOutput(value)`: count a string the builtin itself produced
+    /// toward the output limit (yuzuha's one-argument `checkOutput`).
+    pub fn count_output(&self, text: &str) -> Result<(), ScriptFailure> {
+        self.evaluator.count_output(text)
+    }
+
     /// `checkOutput(previous, current)`: prefer `current` when the nested
     /// run produced output.
     pub fn check_output(&self, previous: String, current: &str) -> String {

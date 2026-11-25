@@ -12,7 +12,33 @@ pub fn text(value: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => js_number_to_string(n),
-        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+        Value::Array(_) | Value::Object(_) => js_stringify(value),
+    }
+}
+
+/// `JSON.stringify` with JS number formatting: integral doubles print
+/// without a fraction (`1`, not `1.0`).
+pub fn js_stringify(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => js_number_to_string(n),
+        Value::String(s) => serde_json::to_string(s).unwrap_or_default(),
+        Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(js_stringify).collect::<Vec<_>>().join(",")
+        ),
+        Value::Object(map) => format!(
+            "{{{}}}",
+            map.iter()
+                .map(|(k, v)| format!(
+                    "{}:{}",
+                    serde_json::to_string(k).unwrap_or_default(),
+                    js_stringify(v)
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
     }
 }
 
@@ -97,8 +123,20 @@ fn split_comparison(value: &str) -> Option<(&str, &str, &str)> {
 }
 
 /// Structural equality (mirrors `deepEqual`).
+/// `deepEqual`: numbers compare by numeric value (1 === 1.0 in JS).
 pub fn deep_equal(a: &Value, b: &Value) -> bool {
-    a == b
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| deep_equal(a, b))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|other| deep_equal(v, other)))
+        }
+        _ => a == b,
+    }
 }
 
 /// Converts exact scalar texts into numbers, booleans or null — used only
@@ -188,11 +226,18 @@ pub fn to_json(value: &Value) -> Result<Value, crate::errors::FnError> {
 
 fn scrub_non_finite(value: &Value) -> Option<Value> {
     match value {
-        Value::Number(n) => n
-            .as_f64()
-            .filter(|f| f.is_finite())
-            .and_then(Number::from_f64)
-            .map(Value::Number),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                return Some(Value::from(i));
+            }
+            if let Some(u) = n.as_u64() {
+                return Some(Value::from(u));
+            }
+            n.as_f64()
+                .filter(|f| f.is_finite())
+                .and_then(Number::from_f64)
+                .map(Value::Number)
+        }
         Value::Array(items) => Some(Value::Array(
             items.iter().filter_map(scrub_non_finite).collect(),
         )),
