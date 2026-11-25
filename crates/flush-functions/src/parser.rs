@@ -68,16 +68,21 @@ impl Parser<'_> {
         }
         let mut nodes: Vec<Node> = Vec::new();
         let mut value = String::new();
-        // Start of the unconsumed text run; also the TextNode offset.
+        // `chunk` marks where scanning resumes; `node_start` is the
+        // TextNode offset (start of the text run, before any escapes).
         let mut chunk = self.pos;
+        let mut node_start = self.pos;
 
         macro_rules! flush {
             () => {
+                if value.is_empty() {
+                    node_start = chunk;
+                }
                 value.push_str(&self.chars[chunk..self.pos].iter().collect::<String>());
                 if !value.is_empty() {
                     nodes.push(Node::Text(TextNode {
                         value: std::mem::take(&mut value),
-                        offset: chunk,
+                        offset: node_start,
                     }));
                 }
                 chunk = self.pos;
@@ -94,6 +99,9 @@ impl Parser<'_> {
                 return self.fail("Unexpected closing bracket.", self.pos);
             }
             if c == '\\' && matches!(self.at(self.pos + 1), Some('\\' | '$' | ';' | '[' | ']')) {
+                if value.is_empty() {
+                    node_start = chunk;
+                }
                 value.push_str(&self.chars[chunk..self.pos].iter().collect::<String>());
                 value.push(self.chars[self.pos + 1]);
                 self.pos += 2;
