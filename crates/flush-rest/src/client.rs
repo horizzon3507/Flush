@@ -116,6 +116,9 @@ pub struct MemberPatch {
     pub mute: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deaf: Option<bool>,
+    /// Voice channel to move the member to (`null` disconnects).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<Option<Snowflake>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

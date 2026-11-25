@@ -23,6 +23,7 @@ pub mod limits;
 pub mod parser;
 pub mod registry;
 pub mod runtime;
+pub mod scheduler;
 pub mod types;
 pub mod values;
 
