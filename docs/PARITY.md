@@ -81,12 +81,17 @@ is kept in `extra`. Most are user-account events a bot token does not receive.
 | Variable service: `global`/`guild`/`user` scopes, TTL, `update`, `expire`, `ttl`, prefix queries with a cursor, atomic transactions, data operations (max 100) | `VariableService`, `VariableTransaction`, `execute_operations`, over `SqliteStore` or `MemoryVariableStore` |
 | Sharding | `BotConfig::sharding` (`ShardingOptions`: ids, count or auto, leader shard, `ShardSchedulerMode`), `FLUXER_SHARD_IDS` / `FLUXER_SHARD_COUNT` / `FLUXER_SHARD_PROCESS_ID`, `BotShard` (`shard_id_for_guild`, `is_leader`, `should_start_jobs`, statuses), `HookEvent::ShardStatus` |
 | Cluster | `Cluster` (`add`, `add_runner`, `restart`, `remove`, `destroy`, entries with status / last error / metadata, lifecycle events) |
+| Function-mode scripting (`$fn[args]` language) | `flush-functions` crate: parser, evaluator, registry and `ScriptContext`; builtins in `builtins::language` (locals/control) and `builtins::entities` — the entity and native groups (users, messages, channels, expressions, threads, roles, webhooks, invites, collectors, guild/info/members), ~119 functions total so far |
 
 ### Deferred
 
 Each of these is a follow-up of its own:
 
-1. **Function-mode scripting language** and its ~459 built-in functions.
+1. **Function-mode builtins leftovers**: `flush-functions` ships the
+   evaluator plus the `language` and `entities` builtin groups; the
+   remaining yuzuha builtin files (math, text, arrays, objects, dates,
+   utility, moderation, functions-mode meta) still wait on their own
+   porting pass.
 2. **CLI leftovers**. The `flush` CLI covers scaffolding, config loading and
    the run/reload lifecycle ([CLI.md](CLI.md)). What is still missing waits
    on other items of this list: `functions`, `lint`, `test`, `editor` and
