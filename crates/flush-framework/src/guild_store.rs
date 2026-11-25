@@ -100,11 +100,14 @@ pub struct GuildConfigPatch {
     pub bot_color: Option<Option<u32>>,
 }
 
-fn default_data_dir() -> PathBuf {
-    std::env::var("FLUSH_DATA_DIR")
-        .or_else(|_| std::env::var("SOUR_DATA_DIR"))
+/// `FLUSH_DATA_DIR` (then `SOUR_DATA_DIR`), else `data`. Read as an OS
+/// string so every store agrees on paths that are not UTF-8.
+pub(crate) fn default_data_dir() -> PathBuf {
+    ["FLUSH_DATA_DIR", "SOUR_DATA_DIR"]
+        .into_iter()
+        .find_map(|name| std::env::var_os(name).filter(|dir| !dir.is_empty()))
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("data"))
+        .unwrap_or_else(|| PathBuf::from("data"))
 }
 
 /// Store with an in-memory cache + atomic writes (mirrors Sour).

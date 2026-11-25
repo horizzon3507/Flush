@@ -58,11 +58,7 @@ fn now_ms() -> u64 {
 }
 
 fn default_path() -> PathBuf {
-    let dir = std::env::var("FLUSH_DATA_DIR")
-        .or_else(|_| std::env::var("SOUR_DATA_DIR"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("data"));
-    dir.join("cases.json")
+    crate::guild_store::default_data_dir().join("cases.json")
 }
 
 #[derive(Debug)]
