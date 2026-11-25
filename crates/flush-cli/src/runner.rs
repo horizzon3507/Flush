@@ -540,13 +540,15 @@ mod tests {
         raiser.join().unwrap();
         assert_eq!(error.code, "INTERRUPTED");
         let pid = std::fs::read_to_string(&pid_file).unwrap();
+        // A killed process nobody reaped yet still has a pid: `Z` is dead.
         let alive = || {
-            Command::new("kill")
-                .args(["-0", pid.trim()])
+            let state = Command::new("ps")
+                .args(["-o", "stat=", "-p", pid.trim()])
                 .stderr(Stdio::null())
-                .status()
+                .output()
                 .unwrap()
-                .success()
+                .stdout;
+            !matches!(state.trim_ascii().first(), None | Some(b'Z'))
         };
         let deadline = Instant::now() + Duration::from_secs(5);
         while alive() && Instant::now() < deadline {
