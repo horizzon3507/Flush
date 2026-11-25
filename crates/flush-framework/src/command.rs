@@ -33,6 +33,10 @@ pub struct CommandCtx<'a> {
     pub channel: Option<Channel>,
     pub member: Option<MemberUser>,
     pub bot_member: Option<MemberUser>,
+    /// Driver-backed voice manager, when the bot attached one (`ctx.voice`).
+    pub voice: Option<crate::voice::Voice>,
+    /// Shared in-memory voice-state tracker (`ctx.voiceStates`).
+    pub voice_states: crate::voice::VoiceStateTracker,
 }
 
 impl CommandCtx<'_> {

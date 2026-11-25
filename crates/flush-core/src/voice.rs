@@ -1,5 +1,6 @@
-//! Voice state payloads (`APIVoiceState`). Flush does not open voice
-//! connections; these types only describe gateway/REST data.
+//! Voice state payloads (`APIVoiceState`). The driver-backed connection
+//! manager lives in `flush-framework::voice`; these types describe
+//! gateway/REST data.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +36,9 @@ pub struct VoiceState {
     pub self_video: bool,
     #[serde(default, deserialize_with = "null_bool")]
     pub self_stream: bool,
+    /// ms timestamp or ISO string; the wire type is not fixed.
+    #[serde(default)]
+    pub request_to_speak_timestamp: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

@@ -79,6 +79,8 @@ pub enum GuildSnapshot {
         channels: Vec<crate::channel::Channel>,
         #[serde(default, deserialize_with = "null_vec")]
         members: Vec<MemberUser>,
+        #[serde(default, deserialize_with = "null_vec")]
+        voice_states: Vec<crate::voice::VoiceState>,
         #[serde(default)]
         member_count: Option<u64>,
         #[serde(default)]
@@ -100,6 +102,8 @@ pub struct GuildFlat {
     pub owner_id: Option<Snowflake>,
     #[serde(default, deserialize_with = "null_vec")]
     pub roles: Vec<Role>,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub voice_states: Vec<crate::voice::VoiceState>,
     #[serde(default)]
     pub member_count: Option<u64>,
     #[serde(default)]
@@ -120,6 +124,10 @@ pub struct Guild {
     pub owner_id: Snowflake,
     #[serde(default, deserialize_with = "null_vec")]
     pub roles: Vec<Role>,
+    /// Voice states carried by `GUILD_CREATE` (the SDK's `voiceStatesSync`
+    /// source). Empty when the gateway does not send them.
+    #[serde(default, deserialize_with = "null_vec")]
+    pub voice_states: Vec<crate::voice::VoiceState>,
     #[serde(default)]
     pub member_count: Option<u64>,
     #[serde(default)]
@@ -138,6 +146,7 @@ impl From<GuildSnapshot> for Guild {
                 member_count,
                 online_count,
                 unavailable,
+                voice_states,
                 ..
             } => Self {
                 id,
@@ -149,6 +158,11 @@ impl From<GuildSnapshot> for Guild {
                 } else {
                     roles
                 },
+                voice_states: if voice_states.is_empty() {
+                    properties.voice_states
+                } else {
+                    voice_states
+                },
                 member_count: member_count.or(properties.member_count),
                 online_count: online_count.or(properties.online_count),
                 unavailable: unavailable.or(properties.unavailable).unwrap_or(false),
@@ -158,6 +172,7 @@ impl From<GuildSnapshot> for Guild {
                 name: f.name,
                 icon: f.icon,
                 owner_id: f.owner_id.unwrap_or_default(),
+                voice_states: f.voice_states,
                 roles: f.roles,
                 member_count: f.member_count,
                 online_count: f.online_count,
