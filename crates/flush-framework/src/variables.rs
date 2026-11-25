@@ -468,10 +468,16 @@ impl<S: VariableStore> VariableService<S> {
 
     pub fn get(&self, scope: VariableScope, name: &str) -> Result<Option<Value>, VariableError> {
         let key = self.actor.key(scope, name, None)?;
-        Ok(self
-            .store
-            .read_entry(&key, (self.clock)())?
-            .map(|v| v.value))
+        Ok(self.read_live(&key)?.0.map(|v| v.value))
+    }
+
+    /// Reads an entry and the time it was live at. The clock is read again
+    /// after the store answers: a value that expired while the read waited
+    /// must not look live.
+    fn read_live(&self, key: &VariableKey) -> Result<(Option<StoredVariable>, u64), VariableError> {
+        let entry = self.store.read_entry(key, (self.clock)())?;
+        let now = (self.clock)();
+        Ok((entry.filter(|v| v.live(now)), now))
     }
 
     pub fn get_or(
@@ -506,7 +512,21 @@ impl<S: VariableStore> VariableService<S> {
             after: options.after,
             limit,
         };
-        Ok(self.store.query(&query, (self.clock)())?)
+        let asked = (self.clock)();
+        let mut page = self.store.query(&query, asked)?;
+        // Same rule as `read_live`: drop what expired while the query waited.
+        let waited = (self.clock)().saturating_sub(asked);
+        if waited > 0 {
+            page.entries.retain_mut(|entry| match &mut entry.ttl {
+                Ttl::Remaining(left) if *left <= waited => false,
+                Ttl::Remaining(left) => {
+                    *left -= waited;
+                    true
+                }
+                _ => true,
+            });
+        }
+        Ok(page)
     }
 
     pub fn set(&self, scope: VariableScope, name: &str, value: Value) -> Result<(), VariableError> {
@@ -562,8 +582,8 @@ impl<S: VariableStore> VariableService<S> {
 
     pub fn ttl(&self, scope: VariableScope, name: &str) -> Result<Ttl, VariableError> {
         let key = self.actor.key(scope, name, None)?;
-        let now = (self.clock)();
-        Ok(Ttl::of(self.store.read_entry(&key, now)?.as_ref(), now))
+        let (entry, now) = self.read_live(&key)?;
+        Ok(Ttl::of(entry.as_ref(), now))
     }
 
     /// Runs several operations atomically. Returning an error rolls every

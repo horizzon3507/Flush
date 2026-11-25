@@ -259,6 +259,15 @@ fn queries<S: VariableStore>(store: S) {
 struct SlowLock {
     inner: MemoryVariableStore,
     clock: Arc<AtomicU64>,
+    slow_reads: bool,
+}
+
+impl SlowLock {
+    fn wait_for_read(&self) {
+        if self.slow_reads {
+            self.clock.fetch_add(1_000, Ordering::SeqCst);
+        }
+    }
 }
 
 impl VariableStore for SlowLock {
@@ -267,14 +276,18 @@ impl VariableStore for SlowLock {
         key: &flush_framework::VariableKey,
         now: u64,
     ) -> Result<Option<flush_framework::StoredVariable>, flush_framework::StoreError> {
-        self.inner.read_entry(key, now)
+        let entry = self.inner.read_entry(key, now);
+        self.wait_for_read();
+        entry
     }
     fn query(
         &self,
         query: &flush_framework::VariableQuery,
         now: u64,
     ) -> Result<flush_framework::VariablePage, flush_framework::StoreError> {
-        self.inner.query(query, now)
+        let page = self.inner.query(query, now);
+        self.wait_for_read();
+        page
     }
     fn transact(
         &self,
@@ -297,12 +310,44 @@ fn expiry_during_lock_wait_is_seen() {
     let store = SlowLock {
         inner: MemoryVariableStore::new(),
         clock: clock.clone(),
+        slow_reads: false,
     };
     let vars = VariableService::new(Arc::new(store), Some("g1"), Some("u1"))
         .with_clock(move || tick.load(Ordering::SeqCst));
     vars.set_with_ttl(Guild, "temp", json!(1), 500).unwrap();
     assert!(!vars.expire(Guild, "temp", None).unwrap());
     assert_eq!(vars.get(Guild, "temp").unwrap(), None);
+}
+
+/// A value that expires while a read waits for the store is not returned.
+#[test]
+fn expiry_during_read_wait_is_seen() {
+    let clock = Arc::new(AtomicU64::new(1_000));
+    let tick = clock.clone();
+    let store = SlowLock {
+        inner: MemoryVariableStore::new(),
+        clock: clock.clone(),
+        slow_reads: true,
+    };
+    let vars = VariableService::new(Arc::new(store), Some("g1"), Some("u1"))
+        .with_clock(move || tick.load(Ordering::SeqCst));
+    vars.set_with_ttl(Guild, "temp", json!(1), 500).unwrap();
+    vars.set_with_ttl(Guild, "later", json!(2), 5_000).unwrap();
+    vars.set(Guild, "kept", json!(3)).unwrap();
+    // Each write waited 1000 ms in `transact`: "temp" expires at 2500 and
+    // "later" at 8000. Every read starts at 2200 and waits 1000 ms.
+    let rewind = || clock.store(2_200, Ordering::SeqCst);
+    rewind();
+    assert_eq!(vars.get(Guild, "temp").unwrap(), None);
+    rewind();
+    assert_eq!(vars.ttl(Guild, "temp").unwrap(), Ttl::Missing);
+    rewind();
+    assert_eq!(vars.ttl(Guild, "later").unwrap(), Ttl::Remaining(4_800));
+    rewind();
+    let page = vars.query(Guild, VariableQueryOptions::default()).unwrap();
+    let names: Vec<_> = page.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["kept", "later"]);
+    assert_eq!(page.entries[1].ttl, Ttl::Remaining(4_800));
 }
 
 fn validation<S: VariableStore>(store: S) {
