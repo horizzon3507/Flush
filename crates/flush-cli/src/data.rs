@@ -137,7 +137,7 @@ fn apply_restore(
     policy: RestorePolicy,
     backup_kind: &str,
     data: Store,
-) -> Result<Store, CliError> {
+) -> Result<(usize, Store), CliError> {
     let Some(_lock) = StoreLock::try_exclusive(path)? else {
         return Err(CliError::new(
             "STORE_IN_USE",
@@ -146,9 +146,10 @@ fn apply_restore(
     };
     let (store, expected) = read_restore_target(path, policy)?;
     check_kind(expected, backup_kind)?;
+    let before = store.len();
     let restored = combine(policy, store, data);
     write_atomic(path, &restored)?;
-    Ok(restored)
+    Ok((before, restored))
 }
 
 fn case_count(store: &Store) -> usize {
@@ -291,11 +292,10 @@ pub fn data_command(
             let file = file.ok_or_else(|| CliError::new("USAGE", "Restore needs --file."))?;
             let (backup_kind, data) = read_backup(file)?;
             check_kind(expected, backup_kind.as_str())?;
-            let before = store.len();
-            let restored = if apply {
+            let (before, restored) = if apply {
                 apply_restore(input, policy, &backup_kind, data)?
             } else {
-                combine(policy, store, data)
+                (store.len(), combine(policy, store, data))
             };
             let note = if apply {
                 "Restored. Start the bot again to load it."
