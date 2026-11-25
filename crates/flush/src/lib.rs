@@ -9,6 +9,7 @@
 //!
 //! Minimal example in `examples/ping.rs` (`!ping` + `!help`).
 
+pub use flush_canvas as canvas;
 pub use flush_core as core;
 pub use flush_framework as framework;
 pub use flush_gateway as gateway;

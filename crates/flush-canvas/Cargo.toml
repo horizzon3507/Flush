@@ -1,0 +1,23 @@
+[package]
+name = "flush-canvas"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Flush canvas cards and image tooling (mirrors yuzuha canvas.ts / images.ts)"
+
+[dependencies]
+flush-core = { path = "../flush-core", version = "0.2.0" }
+flush-rest = { path = "../flush-rest", version = "0.2.0" }
+thiserror.workspace = true
+async-std.workspace = true
+tiny-skia = "0.12"
+tiny-skia-path = "0.12"
+fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+unicode-segmentation = "1"
+surf = { version = "2", default-features = false, features = ["h1-client-rustls"] }
+url.workspace = true
+
+[dev-dependencies]
+image = { version = "0.25", features = ["bmp", "gif"] }

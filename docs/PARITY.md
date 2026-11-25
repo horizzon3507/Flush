@@ -81,6 +81,7 @@ is kept in `extra`. Most are user-account events a bot token does not receive.
 | Variable service: `global`/`guild`/`user` scopes, TTL, `update`, `expire`, `ttl`, prefix queries with a cursor, atomic transactions, data operations (max 100) | `VariableService`, `VariableTransaction`, `execute_operations`, over `SqliteStore` or `MemoryVariableStore` |
 | Sharding | `BotConfig::sharding` (`ShardingOptions`: ids, count or auto, leader shard, `ShardSchedulerMode`), `FLUXER_SHARD_IDS` / `FLUXER_SHARD_COUNT` / `FLUXER_SHARD_PROCESS_ID`, `BotShard` (`shard_id_for_guild`, `is_leader`, `should_start_jobs`, statuses), `HookEvent::ShardStatus` |
 | Cluster | `Cluster` (`add`, `add_runner`, `restart`, `remove`, `destroy`, entries with status / last error / metadata, lifecycle events) |
+| Canvas / image: `ctx.canvas`, `createCanvas`/`loadImage`, the card builder (rect, circle, line, image, avatar, text, badges, progress) with the same limits and error codes, `transformImage`, `registerFonts`/`clearFonts` | `flush_canvas` (`CanvasService`, `create_canvas`, `load_image`, `create_card`/`Card`, `transform_image`, `inspect_image`, `register_fonts`/`clear_fonts`, `CANVAS_LIMITS`); `ctx.canvas()` binds the service to the message channel; `tiny_skia` re-exported as the drawing surface. Rendered in-process with tiny-skia + fontdue (Inter bundled, OFL); WebP is encoded losslessly |
 
 ### Deferred
 
@@ -107,6 +108,5 @@ Each of these is a follow-up of its own:
 5. **Voice runtime** (Flush decodes voice state/server events but opens no
    voice connection).
 6. **Music / Lavalink** integration.
-7. **Canvas / image** tooling.
-8. **Command hot reload** (`load`/`reload` of command directories) and
+7. **Command hot reload** (`load`/`reload` of command directories) and
    cron-expression schedules (the scheduler has delays and intervals only).
