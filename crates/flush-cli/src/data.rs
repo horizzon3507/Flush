@@ -103,6 +103,52 @@ fn read_restore_target(
     }
 }
 
+/// Checked even when one side is empty: the bot cannot read the other kind,
+/// and an empty backup would still wipe the store.
+fn check_kind(expected: Option<&str>, backup_kind: &str) -> Result<(), CliError> {
+    match expected.filter(|expected| *expected != backup_kind) {
+        Some(expected) => Err(CliError::new(
+            "BACKUP_INVALID",
+            format!("The backup holds {backup_kind} but the store holds {expected}."),
+        )),
+        None => Ok(()),
+    }
+}
+
+fn combine(policy: RestorePolicy, store: Store, data: Store) -> Store {
+    match policy {
+        RestorePolicy::Replace => data,
+        RestorePolicy::Merge => {
+            let mut merged = store;
+            merged.extend(data);
+            merged
+        }
+    }
+}
+
+/// Writes the restore while holding the store's exclusive lock. A running
+/// bot keeps its stores in memory and writes them back whole, which would
+/// undo the restore, so an open store is refused. The store is read again
+/// under the lock: another restore may have written it since the first read.
+fn apply_restore(
+    path: &Path,
+    policy: RestorePolicy,
+    backup_kind: &str,
+    data: Store,
+) -> Result<Store, CliError> {
+    let Some(_lock) = StoreLock::try_exclusive(path)? else {
+        return Err(CliError::new(
+            "STORE_IN_USE",
+            "The store is open in a running bot. Stop the bot, then restore again.",
+        ));
+    };
+    let (store, expected) = read_restore_target(path, policy)?;
+    check_kind(expected, backup_kind)?;
+    let restored = combine(policy, store, data);
+    write_atomic(path, &restored)?;
+    Ok(restored)
+}
+
 fn case_count(store: &Store) -> usize {
     store
         .values()
@@ -242,34 +288,13 @@ pub fn data_command(
         DataOperation::Restore => {
             let file = file.ok_or_else(|| CliError::new("USAGE", "Restore needs --file."))?;
             let (backup_kind, data) = read_backup(file)?;
-            // Checked even when one side is empty: the bot cannot read the
-            // other kind, and an empty backup would still wipe the store.
-            if let Some(expected) = expected.filter(|expected| *expected != backup_kind) {
-                return Err(CliError::new(
-                    "BACKUP_INVALID",
-                    format!("The backup holds {backup_kind} but the store holds {expected}."),
-                ));
-            }
+            check_kind(expected, backup_kind.as_str())?;
             let before = store.len();
-            let restored = match policy {
-                RestorePolicy::Replace => data,
-                RestorePolicy::Merge => {
-                    let mut merged = store;
-                    merged.extend(data);
-                    merged
-                }
+            let restored = if apply {
+                apply_restore(input, policy, &backup_kind, data)?
+            } else {
+                combine(policy, store, data)
             };
-            if apply {
-                // A running bot keeps its stores in memory and writes them
-                // back whole, which would undo the restore.
-                let Some(_lock) = StoreLock::try_exclusive(input)? else {
-                    return Err(CliError::new(
-                        "STORE_IN_USE",
-                        "The store is open in a running bot. Stop the bot, then restore again.",
-                    ));
-                };
-                write_atomic(input, &restored)?;
-            }
             let note = if apply {
                 "Restored. Start the bot again to load it."
             } else {
@@ -440,6 +465,36 @@ mod tests {
             invalid_entry("cases", &store(r#"{"1":{"next_id":1,"cases":null}}"#)),
             Some("1")
         );
+    }
+
+    #[test]
+    fn concurrent_merges_keep_both_guilds() {
+        let dir = temp("concurrent");
+        let store = dir.join("cases.json");
+        let backup = |guild: &str| {
+            let file = dir.join(format!("backup-{guild}.json"));
+            let data = format!(r#"{{"{guild}":{{"next_id":1,"cases":[]}}}}"#);
+            let text = format!(r#"{{"version":1,"kind":"cases","data":{data}}}"#);
+            std::fs::write(&file, text).unwrap();
+            file
+        };
+        let (first, second) = (backup("1"), backup("2"));
+        let merge = |file: &Path| loop {
+            let merge = RestorePolicy::Merge;
+            match data_command(DataOperation::Restore, &store, Some(file), true, merge) {
+                Ok(_) => break,
+                Err(error) => assert_eq!(error.code, "STORE_IN_USE"),
+            }
+        };
+        for _ in 0..50 {
+            std::fs::write(&store, "{}").unwrap();
+            std::thread::scope(|scope| {
+                scope.spawn(|| merge(&first));
+                scope.spawn(|| merge(&second));
+            });
+            assert_eq!(read_store(&store).unwrap().len(), 2);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
