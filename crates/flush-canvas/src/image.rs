@@ -138,8 +138,15 @@ pub async fn transform_image(
                 _ => {}
             }
             if transform.width.is_some() || transform.height.is_some() {
-                let w = transform.width.unwrap_or(img.width());
-                let h = transform.height.unwrap_or(img.height());
+                // One dimension given: derive the other from the aspect ratio
+                // (sharp: `width` or `height` alone preserves the ratio).
+                let aspect = img.width() as f64 / img.height() as f64;
+                let w = transform
+                    .width
+                    .unwrap_or_else(|| ((transform.height.unwrap() as f64) * aspect).round().max(1.0) as u32);
+                let h = transform
+                    .height
+                    .unwrap_or_else(|| ((transform.width.unwrap() as f64) / aspect).round().max(1.0) as u32);
                 img = match transform.fit.unwrap_or(TransformFit::Inside) {
                     // sharp `inside`: shrink to fit, never enlarge.
                     TransformFit::Inside => {
@@ -164,7 +171,15 @@ pub async fn transform_image(
                 };
             }
             if transform.grayscale.unwrap_or(false) {
-                img = DynamicImage::ImageLuma8(img.to_luma8());
+                // Keep the alpha channel (sharp `grayscale` preserves it).
+                let mut rgba = img.to_rgba8();
+                for px in rgba.pixels_mut() {
+                    let l = (px[0] as u32 * 77 + px[1] as u32 * 150 + px[2] as u32 * 29) / 256;
+                    px[0] = l as u8;
+                    px[1] = l as u8;
+                    px[2] = l as u8;
+                }
+                img = DynamicImage::ImageRgba8(rgba);
             }
             let format = transform.format.unwrap_or(CanvasFormat::Png);
             let quality = transform.quality.unwrap_or(80);

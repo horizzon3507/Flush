@@ -692,8 +692,11 @@ pub fn inspect_image(bytes: &[u8]) -> Result<ImageDimensions, CanvasError> {
             if data[offset] != 0xff {
                 return Err(input("Invalid JPEG structure."));
             }
-            while data[offset] == 0xff {
+            while offset < data.len() && data[offset] == 0xff {
                 offset += 1;
+            }
+            if offset >= data.len() {
+                return Err(input("Truncated JPEG."));
             }
             let marker = data[offset];
             offset += 1;
