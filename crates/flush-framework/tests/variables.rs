@@ -375,6 +375,16 @@ fn validation<S: VariableStore>(store: S) {
             "{bad}"
         );
     }
+    for repeated in [
+        r#"{"op":"delete","scope":"guild","name":"a","name":"b"}"#,
+        r#"{"op":"get","op":"delete","scope":"guild","name":"a"}"#,
+        r#"{"op":"set","scope":"guild","scope":"global","name":"a","value":1}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<VariableOperation>(repeated).is_err(),
+            "{repeated}"
+        );
+    }
     for good in [
         json!({"op": "expire", "scope": "guild", "name": "n", "ttlMs": null}),
         json!({"op": "set", "scope": "guild", "name": "n", "value": null, "ttlMs": null}),

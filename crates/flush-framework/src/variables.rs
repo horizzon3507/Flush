@@ -792,7 +792,29 @@ impl<'de> Deserialize<'de> for VariableOperation {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error;
 
-        let mut map = serde_json::Map::deserialize(deserializer)?;
+        // A plain `Map` keeps the last of two equal keys; a repeated field is
+        // an error here, so an operation cannot be redirected by one.
+        struct Fields;
+        impl<'de> serde::de::Visitor<'de> for Fields {
+            type Value = serde_json::Map<String, Value>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a variable operation object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut access: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut map = serde_json::Map::new();
+                while let Some((key, value)) = access.next_entry::<String, Value>()? {
+                    if map.contains_key(&key) {
+                        return Err(A::Error::custom(format!("the field `{key}` is repeated")));
+                    }
+                    map.insert(key, value);
+                }
+                Ok(map)
+            }
+        }
+        let mut map = deserializer.deserialize_map(Fields)?;
         fn required<T: serde::de::DeserializeOwned, E: Error>(
             map: &mut serde_json::Map<String, Value>,
             field: &'static str,
