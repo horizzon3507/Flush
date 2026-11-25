@@ -110,7 +110,7 @@ Env: `FLUXER_BOT_TOKEN` (required), `PREFIX` (default `!`),
 ## Tests
 
 ```bash
-cargo test --workspace   # 74 tests: tolerant wire, routes, protocol, framework
+cargo test --workspace   # 78 tests: tolerant wire, routes, protocol, framework
 cargo clippy --workspace --all-targets  # zero warnings
 ```
 
