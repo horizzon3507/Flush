@@ -15,7 +15,7 @@ pub enum CommandError {
     User(String),
     #[error("rest: {0}")]
     Rest(#[from] flush_rest::RestError),
-    #[error("interno: {0}")]
+    #[error("internal: {0}")]
     Internal(String),
 }
 

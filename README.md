@@ -18,6 +18,7 @@ What matches the two references, and what is still deferred, is tracked in
 | `flush-rest` | REST `/v1` on surf: discovery `GET /.well-known/fluxer` → `api_public` (fallback `https://api.fluxer.app`), `Bot <token>` auth, 429 retry via `Retry-After` |
 | `flush-framework` | Router + features: per-guild prefix, aliases, dedup, cooldown, typed arguments, middleware, collectors, scheduler, rotating presence every 45s, per-command permission gate, generated help, event hooks, mod log, atomic JSON `GuildStore`/`CaseStore`, `with_mod_action` |
 | `flush-lib` | Facade: re-exports the crates + the `ping` example |
+| `flush-cli` | The `flush` command line: `init`, `templates`, `check`, `doctor`, `data`, `run`, `dev` ([docs/CLI.md](docs/CLI.md)) |
 
 ## REST (/v1)
 
@@ -59,9 +60,22 @@ raw payload, and `Event::wire_name()` tells them apart.
 - **`Bot::enable_help()`**: built-in `help` command listing the others (name, description, usage, aliases, required permission) from a snapshot synced in `run()`.
 - **`Bot::hooks(impl Hooks)`**: `HookEvent` with `Ready`, `GuildAdd`, `MemberJoin`, `MemberLeave`, `Message` and `Raw` (every gateway event).
 - **Mod log**: `ModAction.log_channel` receives each moderation success without a ping (errors swallowed), with the channel coming from `GuildStore.mod_log_channel_id` (`MOD_LOG_CHANNEL_ID`/env per guild).
+- **`StoreLock`**: `GuildStore` and `CaseStore` hold a shared advisory lock on `<store>.lock` while they are open. A tool that replaces a store file calls `StoreLock::try_exclusive` first and gets `None` while a bot has the store open.
+- **`VariableService`**: JSON variables in `global`, `guild` and `user` scopes with TTL (`set_with_ttl`, `expire`, `ttl`), `update`/`increment`, prefix queries with a cursor and atomic `transaction`s; runs over `MemoryVariableStore` or `SqliteStore`.
+- **`SqliteStore`** (feature `sqlite`, on by default; bundles SQLite): one WAL database for variables, cases (`add_case`, `cases_for_user`, `active_warns`, `revert_warn`) and guild configuration, plus `import_guilds_json`/`import_cases_json` to move off the JSON stores. Build with `default-features = false` to leave SQLite out.
 - Sour-style reply writers: `plain_error`, `info_block`, `mod_success`.
 
 ## Quickstart
+
+```bash
+cargo install --path crates/flush-cli
+flush init my-bot --template moderation   # or: flush templates
+cd my-bot && cp .env.example .env         # fill in FLUXER_BOT_TOKEN
+flush check --build && flush dev
+```
+
+`flush.toml` holds the bot's settings and `flush::bot_from_project` loads it
+together with `.env`; see [docs/CLI.md](docs/CLI.md). Or run the bundled example:
 
 ```bash
 FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping
@@ -110,7 +124,8 @@ Env: `FLUXER_BOT_TOKEN` (required), `PREFIX` (default `!`),
 ## Tests
 
 ```bash
-cargo test --workspace   # 78 tests: tolerant wire, routes, protocol, framework
+cargo test --workspace   # tolerant wire, routes, protocol, framework, CLI
+cargo test -p flush-cli --test cli -- --ignored   # builds, lints and tests every scaffold
 cargo clippy --workspace --all-targets  # zero warnings
 ```
 

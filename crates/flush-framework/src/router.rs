@@ -542,12 +542,10 @@ impl Bot {
         }
 
         let guild_key = message.guild_id.map(|g| g.to_string());
-        let stored = self.store.prefix(guild_key.as_deref());
-        let prefix = if stored.is_empty() {
-            self.config.default_prefix.clone()
-        } else {
-            stored
-        };
+        let prefix = guild_key
+            .as_deref()
+            .and_then(|guild| self.store.stored_prefix(guild))
+            .unwrap_or_else(|| self.config.default_prefix.clone());
         let Some(parsed) = parse_prefix_body(&message.content, &prefix, false) else {
             // Mention → reply with the prefix (mirrors Jully).
             if let Some(id) = bot_id {

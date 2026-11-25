@@ -65,12 +65,17 @@ Deferred; mostly user-account events a bot token does not receive:
 | Prefix commands, aliases, cooldowns, per-guild prefix | `Bot`, `Command`, `Cooldowns`, `GuildStore` |
 | Permission and hierarchy guards | `Command::required_permission`, `Moderation` |
 | Moderation with cases and mod log | `with_mod_action`, `CaseStore`, `ModAction.log_channel` |
+| Store in use by a running bot is detectable | `StoreLock` (shared while `GuildStore`/`CaseStore` are open, `try_exclusive` for whole-file replacement) |
 | Help | `Bot::enable_help()` |
 | Event hooks | `Hooks`, including `HookEvent::Raw` for every gateway event |
 | Typed arguments | `Args` (user, role, channel, integer, boolean, duration, rest) |
 | Middleware | `Middleware`, `Guard`, `guild_only` |
 | Collectors | `Collectors` (messages and reactions) |
 | Scheduler | `Scheduler` (`after`, `every`, cancellation, paused on shard processes that should not run jobs) |
+| CLI: `init`, `templates`, `check`, `doctor`, `data`, `run`, `dev` | `flush` binary (`flush-cli`), see [CLI.md](CLI.md) |
+| Config and `.env` loading | `ProjectConfig` (`flush.toml`), `bot_from_project`, `load_env` |
+| SQLite store (WAL, `BEGIN IMMEDIATE`, normalized tables, private file mode, schema guard) | `SqliteStore` (feature `sqlite`, on by default): variables, cases, guild configuration, import from the JSON stores |
+| Variable service: `global`/`guild`/`user` scopes, TTL, `update`, `expire`, `ttl`, prefix queries with a cursor, atomic transactions, data operations (max 100) | `VariableService`, `VariableTransaction`, `execute_operations`, over `SqliteStore` or `MemoryVariableStore` |
 | Sharding | `BotConfig::sharding` (`ShardingOptions`: ids, count or auto, leader shard, `ShardSchedulerMode`), `FLUXER_SHARD_IDS` / `FLUXER_SHARD_COUNT` / `FLUXER_SHARD_PROCESS_ID`, `BotShard` (`shard_id_for_guild`, `is_leader`, `should_start_jobs`, statuses), `HookEvent::ShardStatus` |
 | Cluster | `Cluster` (`add`, `add_runner`, `restart`, `remove`, `destroy`, entries with status / last error / metadata, lifecycle events) |
 
@@ -79,9 +84,18 @@ Deferred; mostly user-account events a bot token does not receive:
 Each of these is a follow-up of its own:
 
 1. **Function-mode scripting language** and its ~459 built-in functions.
-2. **CLI** (project scaffolding, config loading, run/reload lifecycle).
-3. **SQLite store** (Flush persists `GuildStore`/`CaseStore` as JSON only),
-   plus Yuzuha's variable service on top of it.
+2. **CLI leftovers**. The `flush` CLI covers scaffolding, config loading and
+   the run/reload lifecycle ([CLI.md](CLI.md)). What is still missing waits
+   on other items of this list: `functions`, `lint`, `test`, `editor` and
+   `init --functions` (item 1); `run --shards` (item 4); plus `data cleanup`,
+   `data` on SQLite stores, the `community`, `economy`, `utility` and
+   `multifunctional` templates, and the health server behind `--health-port`.
+   `check` reports the config only: the command catalog lives inside the
+   compiled bot.
+3. **SQLite leftovers**: persisted schedules and schedule history (Flush
+   scheduler jobs are in-memory closures, so there is nothing to store yet),
+   and `Bot` itself still reads the per-guild prefix from the JSON
+   `GuildStore`; `SqliteStore` is used from commands.
 4. **Cross-process shard supervisor**: spawning one child process per shard
    group, and `broadcastEval` / `fetchClientValues` / `respawn` across
    processes. A process started with the `FLUXER_SHARD_*` variables runs its
