@@ -297,6 +297,30 @@ pub mod codes {
     pub const STOP: &str = "STOP";
     pub const LOOP_CONTROL: &str = "LOOP_CONTROL";
     pub const MODERATION_PARTIAL: &str = "MODERATION_PARTIAL";
+    /// yuzuha script-level codes used by the services builtins.
+    pub const INDEX: &str = "INDEX";
+    pub const NUMBER: &str = "NUMBER";
+    pub const JSON: &str = "JSON";
+    pub const DURATION: &str = "DURATION";
+    pub const USER_ID: &str = "USER_ID";
+    pub const CHANNEL_ID: &str = "CHANNEL_ID";
+    pub const VARIABLE_QUERY: &str = "VARIABLE_QUERY";
+    pub const VARIABLE: &str = "VARIABLE";
+    pub const DATA_TRANSACTION: &str = "DATA_TRANSACTION";
+    pub const SCHEDULE: &str = "SCHEDULE";
+    pub const HTTP: &str = "HTTP";
+    pub const HTTP_HEADER: &str = "HTTP_HEADER";
+    pub const HTTP_METHOD: &str = "HTTP_METHOD";
+    pub const HTTP_URL: &str = "HTTP_URL";
+    pub const HTTP_BODY: &str = "HTTP_BODY";
+    pub const HTTP_JSON: &str = "HTTP_JSON";
+    pub const HTTP_MULTIPART: &str = "HTTP_MULTIPART";
+    pub const VOICE_STATE: &str = "VOICE_STATE";
+    pub const USER_ERROR: &str = "USER_ERROR";
+    pub const SDK: &str = "SDK";
+    pub const COLLECTION: &str = "COLLECTION";
+    pub const CDN: &str = "CDN";
+    pub const INSTANCE: &str = "INSTANCE";
 }
 
 /// Errors that must never be swallowed by `$try` or rethrown as

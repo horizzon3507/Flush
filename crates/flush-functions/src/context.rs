@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use flush_core::{Channel, Guild, MemberUser, Message, Snowflake};
-use flush_framework::{CaseStore, Collectors, ModCase, Scheduler, VariableService, VariableStore};
+use flush_framework::{CaseStore, Collectors, ModCase, VariableService, VariableStore};
 use flush_rest::RestClient;
 
 use crate::errors::{GuardError, GuardReason};
@@ -22,7 +22,7 @@ pub const NO_AUTHOR: &str = "Could not resolve the command author.";
 
 /// Everything a script execution can reach: the triggering message,
 /// identity snapshots, the REST client and the optional framework
-/// services (variables, cases, scheduler, collectors).
+/// services (variables, cases, scheduler, cooldowns, collectors).
 pub struct ScriptContext {
     /// The message that ran the command (or a synthetic one for events).
     pub message: Message,
@@ -56,8 +56,11 @@ pub struct ScriptContext {
     /// Dev guild IDs (for `isDevGuild` checks).
     pub dev_guilds: Vec<Snowflake>,
     pub variables: Option<Arc<Variables>>,
-    pub cases: Option<Arc<CaseStore>>,
-    pub scheduler: Option<Arc<Scheduler>>,
+    pub cases: Option<Arc<Mutex<CaseStore>>>,
+    /// In-memory scheduler records for the `schedule` builtins.
+    pub scheduler: Option<Arc<crate::scheduler::ScriptScheduler>>,
+    /// In-memory `(key -> until ms)` cooldown claims for `$cooldown`.
+    pub cooldowns: Option<Arc<Mutex<HashMap<String, u64>>>>,
     pub collectors: Option<Arc<Collectors>>,
     /// Milliseconds clock (`ctx.now`) — a fn so tests can pin it.
     pub now: Box<dyn Fn() -> u64 + Send + Sync>,

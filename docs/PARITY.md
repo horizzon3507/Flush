@@ -87,6 +87,10 @@ is kept in `extra`. Most are user-account events a bot token does not receive.
 Each of these is a follow-up of its own:
 
 1. **Function-mode scripting language** and its ~459 built-in functions.
+   `crates/flush-functions` holds the runtime and the `language` and
+   `services` builtin groups (context, guards, flow, storage, events,
+   schedule, http, moderation, pure-*, voice/music/canvas registered as
+   `NATIVE_UNAVAILABLE`); the remaining builtin groups are still deferred.
 2. **CLI leftovers**. The `flush` CLI covers scaffolding, config loading and
    the run/reload lifecycle ([CLI.md](CLI.md)). What is still missing waits
    on other items of this list: `functions`, `lint`, `test`, `editor` and
