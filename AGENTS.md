@@ -25,7 +25,8 @@ crates/flush-core/       types: Snowflake, permissions, entities, Event::decode
 crates/flush-gateway/    WS v1: Hello/Identify/Resume/Heartbeat + GatewayClient
 crates/flush-rest/       REST /v1: discovery, Bot <token>, client.rs + resources.rs
 crates/flush-framework/  router: prefix, cooldown, args, middleware, collectors,
-                         scheduler, GuildStore, CaseStore, moderation
+                         scheduler, GuildStore, CaseStore, moderation,
+                         VariableService, SqliteStore (feature `sqlite`)
 crates/flush/            facade + examples/ping.rs (!ping round-trip, !help)
 crates/flush-cli/        `flush` binary: init/templates/check/doctor/data/run/dev;
                          templates/ holds the generated command sources

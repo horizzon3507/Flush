@@ -10,10 +10,14 @@ description = "Flush: a Rust framework/library for Fluxer bots (gateway + REST +
 flush-core = { path = "../flush-core", version = "0.2.0" }
 flush-gateway = { path = "../flush-gateway", version = "0.2.0" }
 flush-rest = { path = "../flush-rest", version = "0.2.0" }
-flush-framework = { path = "../flush-framework", version = "0.2.0" }
+flush-framework = { path = "../flush-framework", version = "0.2.0", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 async-std.workspace = true
 futures.workspace = true
 log.workspace = true
+
+[features]
+default = ["sqlite"]
+sqlite = ["flush-framework/sqlite"]

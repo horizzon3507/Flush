@@ -8,6 +8,7 @@
 //!   from events) so handlers can call `rest.reply(...)` etc.
 //! - [`ProjectConfig`]: `flush.toml` + `.env` loading shared with the `flush` CLI.
 //! - Typed arguments ([`Args`]), [`Middleware`], [`Collectors`] and a [`Scheduler`].
+//! - Scoped variables ([`VariableService`]) over memory or SQLite (`SqliteStore`).
 pub mod args;
 pub mod cases;
 pub mod collector;
@@ -21,6 +22,10 @@ pub mod parse;
 pub mod project;
 pub mod router;
 pub mod scheduler;
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
+pub mod store_lock;
+pub mod variables;
 
 pub use args::{parse_bool, parse_channel, parse_duration, parse_role, parse_user, ArgError, Args};
 pub use cases::{CaseStore, CaseType, ModCase};
@@ -28,7 +33,7 @@ pub use collector::{CollectedReaction, Collector, Collectors};
 pub use command::{info_block, mod_success, plain_error};
 pub use command::{Command, CommandCtx, CommandError, CommandResult};
 pub use cooldown::Cooldowns;
-pub use guild_store::{GuildConfig, GuildStore};
+pub use guild_store::{GuildConfig, GuildConfigPatch, GuildStore};
 pub use help::{CommandInfo, Help, HelpCmd};
 pub use middleware::{guild_only, Flow, Guard, Middleware};
 pub use moderation::{with_mod_action, ModAction, Moderation, PermissionAction};
@@ -39,3 +44,12 @@ pub use project::{
 };
 pub use router::{Bot, BotConfig, HookEvent, Hooks, NoHooks};
 pub use scheduler::{JobHandle, Scheduler};
+#[cfg(feature = "sqlite")]
+pub use sqlite::SqliteStore;
+pub use store_lock::StoreLock;
+pub use variables::{
+    execute_operations, MemoryVariableStore, OperationKind, ScopedVariables, StoreError,
+    StoredVariable, Ttl, VariableAccess, VariableEntry, VariableError, VariableKey,
+    VariableOperation, VariablePage, VariableQuery, VariableQueryOptions, VariableScope,
+    VariableService, VariableStore, VariableTransaction, DATA_TRANSACTION_MAX,
+};

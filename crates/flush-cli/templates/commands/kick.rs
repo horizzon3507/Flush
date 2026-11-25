@@ -75,13 +75,17 @@ impl Command for Kick {
             })
             .await;
             if acted.load(Ordering::Relaxed) {
-                cases.add(
+                let saved = cases.add(
                     &guild.to_string(),
                     CaseType::Kick,
                     &user.to_string(),
                     &ctx.message.author.id.to_string(),
                     &reason,
                 );
+                if saved.is_err() {
+                    ctx.reply_no_ping(format!("⚠️ Case #{case_id} could not be saved."))
+                        .await?;
+                }
             }
             outcome.map(|_| ())
         })

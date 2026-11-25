@@ -39,15 +39,18 @@ impl Command for Unban {
             };
             let reason = reason_from(&ctx.args, 1);
             ctx.rest.unban(guild, user, Some(&reason)).await?;
-            let case = CaseStore::with_default_path().add(
+            let saved = CaseStore::with_default_path().add(
                 &guild.to_string(),
                 CaseType::Unban,
                 &user.to_string(),
                 &ctx.message.author.id.to_string(),
                 &reason,
             );
-            ctx.reply_no_ping(format!("✅ Ban removed. Case #{}.", case.id))
-                .await?;
+            let reply = match saved {
+                Ok(case) => format!("✅ Ban removed. Case #{}.", case.id),
+                Err(_) => "✅ Ban removed, but the case could not be saved.".to_owned(),
+            };
+            ctx.reply_no_ping(reply).await?;
             Ok(())
         })
     }
