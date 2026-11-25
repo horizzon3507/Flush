@@ -19,6 +19,7 @@ log.workspace = true
 toml.workspace = true
 fs4.workspace = true
 rusqlite = { workspace = true, optional = true }
+jiff = "1.0.3"
 
 [features]
 default = ["sqlite"]

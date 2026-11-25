@@ -29,7 +29,7 @@ impl Help {
         }
     }
 
-    pub fn refresh(&self, commands: &[Box<dyn Command>]) {
+    pub fn refresh(&self, commands: &[std::sync::Arc<dyn Command>]) {
         let list: Vec<CommandInfo> = commands
             .iter()
             .map(|c| CommandInfo {
@@ -44,6 +44,12 @@ impl Help {
         if let Ok(mut g) = self.snapshot.lock() {
             *g = list;
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot_names(&self) -> Vec<String> {
+        let list = self.snapshot.lock().unwrap_or_else(|e| e.into_inner());
+        list.iter().map(|c| c.name.clone()).collect()
     }
 
     fn detail(list: &[CommandInfo], query: &str) -> Option<String> {

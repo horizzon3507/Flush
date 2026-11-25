@@ -74,7 +74,9 @@ is kept in `extra`. Most are user-account events a bot token does not receive.
 | Typed arguments | `Args` (user, role, channel, integer, boolean, duration, rest) |
 | Middleware | `Middleware`, `Guard`, `guild_only` |
 | Collectors | `Collectors` (messages and reactions) |
-| Scheduler | `Scheduler` (`after`, `every`, cancellation, paused on shard processes that should not run jobs) |
+| Scheduler | `Scheduler` (`after`, `every`, `cron`/`cron_with_policy` with `MissedRunPolicy` and IANA timezones, cancellation, paused on shard processes that should not run jobs) |
+| Cron expressions and timezones | `cron`: `parse_cron`, `next_cron`, `assert_timezone` (nonexistent local minutes skipped, folds run twice) |
+| `load`/`reload` of command groups | `CommandRegistry`/`CommandLoader` (`Bot::loader`, `Bot::load`, `Bot::reload`): `load` replaces every command, `reload` replaces only that directory's and keeps manual and other groups; the router resolves each message against a fresh snapshot, so swaps apply to a running bot. New code reaches the process through a rebuild (`flush dev`), not a runtime import |
 | CLI: `init`, `templates`, `check`, `doctor`, `data`, `run`, `dev` | `flush` binary (`flush-cli`), see [CLI.md](CLI.md) |
 | Config and `.env` loading | `ProjectConfig` (`flush.toml`), `bot_from_project`, `load_env` |
 | SQLite store (WAL, `BEGIN IMMEDIATE`, normalized tables, private file mode, schema guard) | `SqliteStore` (feature `sqlite`, on by default): variables, cases, guild configuration, import from the JSON stores |
@@ -108,5 +110,3 @@ Each of these is a follow-up of its own:
    voice connection).
 6. **Music / Lavalink** integration.
 7. **Canvas / image** tooling.
-8. **Command hot reload** (`load`/`reload` of command directories) and
-   cron-expression schedules (the scheduler has delays and intervals only).
