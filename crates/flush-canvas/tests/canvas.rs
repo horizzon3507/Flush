@@ -134,6 +134,19 @@ fn inspect_rejects_garbage() {
     assert_eq!(code(&inspect_image(&gif).unwrap_err()), "CANVAS_INPUT");
 }
 
+#[test]
+fn inspect_rejects_truncated_jpeg() {
+    // A JPEG whose tail is 0xFF padding must error, not panic.
+    let mut truncated = jpeg_bytes(16, 16);
+    truncated.truncate(truncated.len() - 4);
+    truncated.extend_from_slice(&[0xff, 0xff, 0xff, 0xff]);
+    assert!(inspect_image(&truncated).is_err());
+    // Header cut off right after the fill bytes.
+    let mut marker_only = vec![0xff, 0xd8];
+    marker_only.extend_from_slice(&[0xff, 0xff, 0xff, 0xff]);
+    assert!(inspect_image(&marker_only).is_err());
+}
+
 // ---------- transform_image ----------
 
 #[async_std::test]
@@ -163,6 +176,33 @@ async fn transform_jpeg_quality_and_rotation() {
     let info = inspect_image(&out.data).unwrap();
     assert_eq!(info.format, CanvasFormat::Jpeg);
     assert_eq!((info.width, info.height), (20, 40));
+}
+
+#[async_std::test]
+async fn transform_one_dimension_keeps_aspect() {
+    // 64x32 with only `width` set: the height follows the aspect ratio
+    // for every fit, instead of cropping/padding to a 32-high box.
+    let src = png_bytes(64, 32, [10, 20, 30, 255]);
+    for fit in [TransformFit::Inside, TransformFit::Contain, TransformFit::Cover] {
+        let t = ImageTransform { width: Some(32), fit: Some(fit), ..Default::default() };
+        let out = transform_image(&src, &t, &TransformOptions::default()).await.unwrap();
+        let info = inspect_image(&out.data).unwrap();
+        assert_eq!((info.width, info.height), (32, 16), "fit {fit:?}");
+    }
+    let t = ImageTransform { height: Some(16), ..Default::default() };
+    let out = transform_image(&src, &t, &TransformOptions::default()).await.unwrap();
+    assert_eq!((out.width, out.height), (32, 16));
+}
+
+#[async_std::test]
+async fn transform_grayscale_preserves_alpha() {
+    // A transparent PNG stays transparent after grayscale.
+    let src = png_bytes(8, 8, [200, 30, 30, 0]);
+    let t = ImageTransform { grayscale: Some(true), ..Default::default() };
+    let out = transform_image(&src, &t, &TransformOptions::default()).await.unwrap();
+    let decoded = image::load_from_memory(&out.data).unwrap().to_rgba8();
+    assert_eq!(decoded.get_pixel(0, 0)[3], 0);
+    assert_eq!(decoded.get_pixel(0, 0)[0], decoded.get_pixel(0, 0)[1]);
 }
 
 #[async_std::test]
@@ -435,6 +475,68 @@ async fn unknown_family_and_asset_resolution() {
         code(&card2.render(&RenderOptions::default(), service.config()).await.unwrap_err()),
         "CANVAS_INPUT"
     );
+}
+
+#[test]
+fn canvas_config_defaults_to_remote_fetch() {
+    assert!(CanvasConfig::default().fetch_remote);
+}
+
+#[async_std::test]
+async fn padded_font_family_still_resolves() {
+    // `Card::font` trims the family; `Card::text` must trim it the same way
+    // so a padded name resolves instead of failing at render time.
+    let service = service();
+    let mut card = service.create(64, 32, &create_options()).unwrap();
+    let ttf = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/canvas/Inter-Regular.ttf")).unwrap();
+    card.font("  MyFont ", CanvasSource::bytes(ttf).unwrap(), FontWeight::Regular).unwrap();
+    card.text("hi", TextOptions {
+        x: 0.0, y: 0.0, family: Some("  MyFont ".into()), ..Default::default()
+    })
+    .unwrap();
+    card.render(&RenderOptions::default(), service.config()).await.unwrap();
+}
+
+#[async_std::test]
+async fn configured_fonts_cannot_bypass_file_limit() {
+    // Nine distinct configured font files must trip the 8-file scene limit
+    // even though `Card::font` was never used.
+    let mut config = CanvasConfig { fetch_remote: false, ..Default::default() };
+    for i in 0..9 {
+        let mut bytes = vec![0x00, 0x01, 0x00, 0x00];
+        bytes.extend_from_slice(&[0u8; 16]);
+        bytes.push(i);
+        config.fonts.insert(format!("Fam{i}"), ConfiguredFont {
+            regular: CanvasSource::bytes(bytes).unwrap(),
+            bold: None,
+        });
+    }
+    let service = CanvasService::new(config).unwrap();
+    let mut card = service.create(64, 64, &create_options()).unwrap();
+    for i in 0..9 {
+        card.text("x", TextOptions {
+            x: 0.0, y: i as f64, family: Some(format!("Fam{i}")), ..Default::default()
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        code(&card.render(&RenderOptions::default(), service.config()).await.unwrap_err()),
+        "EXECUTION_LIMIT"
+    );
+}
+
+#[async_std::test]
+async fn oversized_image_op_stays_bounded() {
+    // A 90000px-wide image op on a small canvas must not allocate a
+    // 90000px resize: the draw target is clamped to the canvas.
+    let service = service();
+    let mut card = service.create(16, 16, &create_options()).unwrap();
+    let img = CanvasSource::bytes(png_bytes(2000, 2000, [5, 5, 5, 255])).unwrap();
+    card.image(img, ImageOptions {
+        x: 0.0, y: 0.0, width: 90_000.0, height: 90_000.0, ..Default::default()
+    })
+    .unwrap();
+    card.render(&RenderOptions::default(), service.config()).await.unwrap();
 }
 
 #[async_std::test]

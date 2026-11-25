@@ -55,7 +55,7 @@ pub fn clear_fonts() {
 }
 
 /// Runtime configuration shared by every canvas of a service.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CanvasConfig {
     /// `asset:` aliases to bytes.
     pub assets: HashMap<String, Vec<u8>>,
@@ -65,6 +65,17 @@ pub struct CanvasConfig {
     pub timeout_ms: Option<u64>,
     /// Whether remote HTTP/HTTPS sources may be fetched. Default true.
     pub fetch_remote: bool,
+}
+
+impl Default for CanvasConfig {
+    fn default() -> Self {
+        Self {
+            assets: HashMap::new(),
+            fonts: HashMap::new(),
+            timeout_ms: None,
+            fetch_remote: true,
+        }
+    }
 }
 
 fn clone_config(config: &CanvasConfig) -> Result<CanvasConfig, CanvasError> {
@@ -511,6 +522,7 @@ impl Card {
         validate_paint(&o.paint)?;
         let mut stored = o.clone();
         stored.max_width = Some(max_width);
+        stored.family = stored.family.map(|f| f.trim().to_string());
         let len = char_count(&value);
         self.check_text_length(len)?;
         self.push(Operation::Text(value, stored), 1)?;
@@ -624,7 +636,7 @@ impl Card {
         let config = clone_config(config)?;
         let scene = self.snapshot();
         async_std::future::timeout(Duration::from_millis(timeout_ms), async move {
-            resolve_and_render(scene, &config, format, quality, matte).await
+            resolve_and_render(scene, &config, format, quality, matte, timeout_ms).await
         })
         .await
         .map_err(|_| CanvasError::ExecutionLimit("Render exceeded the configured time.".into()))?
@@ -637,11 +649,10 @@ async fn resolve_and_render(
     format: CanvasFormat,
     quality: u32,
     matte: Option<CanvasColor>,
+    timeout_ms: u64,
 ) -> Result<CanvasResult, CanvasError> {
     let started = Instant::now();
-    let timeout = Duration::from_millis(
-        config.timeout_ms.unwrap_or(CANVAS_LIMITS.default_timeout_ms),
-    );
+    let timeout = Duration::from_millis(timeout_ms);
     let mut source_cache: HashMap<String, Vec<u8>> = HashMap::new();
     let mut image_bytes: HashMap<String, Vec<u8>> = HashMap::new();
     for op in scene.operations.iter_mut() {
@@ -748,6 +759,15 @@ async fn resolve_and_render(
         validate_font_bytes(&bytes)?;
         fonts_cache.insert((family.clone(), *weight), bytes);
     }
+    let distinct_font_files: HashSet<String> = scene_fonts
+        .values()
+        .map(|f| f.source.key())
+        .collect();
+    if distinct_font_files.len() > CANVAS_LIMITS.max_font_files {
+        return Err(CanvasError::ExecutionLimit(
+            "Scene exceeds 8 custom font files.".into(),
+        ));
+    }
     scene.fonts = scene_fonts.into_values().collect();
 
     // Scene-level budgets.
@@ -786,12 +806,15 @@ async fn resolve_and_render(
     if started.elapsed() > timeout {
         return Err(CanvasError::ExecutionLimit("Render exceeded the configured time.".into()));
     }
-    render_scene(&scene, &RenderOptions {
+    // Painting and encoding are CPU-bound: run them on a blocking thread so
+    // the enclosing `future::timeout` can cancel the await promptly.
+    let render_options = RenderOptions {
         format: Some(format),
         quality: Some(quality),
         matte,
         timeout_ms: Some(timeout.as_millis() as u64),
-    })
+    };
+    async_std::task::spawn_blocking(move || render_scene(&scene, &render_options)).await
 }
 
 async fn resolve_cached(
@@ -887,12 +910,12 @@ impl<'a> CanvasService<'a> {
             .or(self.channel_id)
             .ok_or_else(|| CanvasError::State("Provide channelID to send the image.".into()))?;
         if let Some(content) = &options.content {
-            if content.len() > 2000 {
+            if char_count(content) > 2000 {
                 return opt_error("content must be at most 2000 characters.");
             }
         }
         if let Some(description) = &options.description {
-            if description.len() > 1024 {
+            if char_count(description) > 1024 {
                 return opt_error("description must be at most 1024 characters.");
             }
         }
@@ -939,13 +962,23 @@ impl<'a> CanvasService<'a> {
             .channel_id
             .or(self.channel_id)
             .ok_or_else(|| CanvasError::State("Provide channelID to send the image.".into()))?;
+        if let Some(content) = &options.content {
+            if char_count(content) > 2000 {
+                return opt_error("content must be at most 2000 characters.");
+            }
+        }
+        if let Some(description) = &options.description {
+            if char_count(description) > 1024 {
+                return opt_error("description must be at most 1024 characters.");
+            }
+        }
         let render_options = RenderOptions {
             format: options.format,
             quality: options.quality,
             matte: options.matte.clone(),
             timeout_ms: options.timeout_ms,
         };
-        let (format, quality, _, _timeout_ms) = format_options(
+        let (format, quality, _, timeout_ms) = format_options(
             &render_options,
             self.config.timeout_ms.unwrap_or(CANVAS_LIMITS.default_timeout_ms),
         )?;
@@ -958,35 +991,50 @@ impl<'a> CanvasService<'a> {
         {
             return opt_error("Physical dimensions exceed the Canvas limits.");
         }
-        // JPEG matte: fill transparent pixels before encoding.
-        let data = if format == CanvasFormat::Jpeg && options.matte.is_some() {
-            let mut flat = create_canvas(canvas.width(), canvas.height())?;
-            let paint = {
-                let (r, g, b, a) = parse_color(options.matte.as_deref().unwrap()).unwrap();
-                tiny_skia::Paint {
-                    shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(r, g, b, a)),
-                    ..Default::default()
+        let pixmap = canvas.pixmap().clone();
+        let matte_opt = options.matte.clone();
+        let data = async_std::future::timeout(
+            Duration::from_millis(timeout_ms),
+            async_std::task::spawn_blocking(move || -> Result<Vec<u8>, CanvasError> {
+                let canvas = Canvas { pixmap };
+                // JPEG matte: fill transparent pixels before encoding.
+                if format == CanvasFormat::Jpeg && matte_opt.is_some() {
+                    let mut flat = create_canvas(canvas.width(), canvas.height())?;
+                    let (r, g, b, a) = parse_color(matte_opt.as_deref().unwrap()).unwrap();
+                    let paint = tiny_skia::Paint {
+                        shader: tiny_skia::Shader::SolidColor(
+                            tiny_skia::Color::from_rgba8(r, g, b, a),
+                        ),
+                        ..Default::default()
+                    };
+                    flat.pixmap_mut().fill_rect(
+                        tiny_skia::Rect::from_xywh(
+                            0.0,
+                            0.0,
+                            canvas.width() as f32,
+                            canvas.height() as f32,
+                        )
+                        .unwrap(),
+                        &paint,
+                        tiny_skia::Transform::default(),
+                        None,
+                    );
+                    flat.pixmap_mut().draw_pixmap(
+                        0,
+                        0,
+                        canvas.pixmap().as_ref(),
+                        &tiny_skia::PixmapPaint::default(),
+                        tiny_skia::Transform::default(),
+                        None,
+                    );
+                    flat.encode(format, quality)
+                } else {
+                    canvas.encode(format, quality)
                 }
-            };
-            flat.pixmap_mut().fill_rect(
-                tiny_skia::Rect::from_xywh(0.0, 0.0, canvas.width() as f32, canvas.height() as f32)
-                    .unwrap(),
-                &paint,
-                tiny_skia::Transform::default(),
-                None,
-            );
-            flat.pixmap_mut().draw_pixmap(
-                0,
-                0,
-                canvas.pixmap().as_ref(),
-                &tiny_skia::PixmapPaint::default(),
-                tiny_skia::Transform::default(),
-                None,
-            );
-            flat.encode(format, quality)?
-        } else {
-            canvas.encode(format, quality)?
-        };
+            }),
+        )
+        .await
+        .map_err(|_| CanvasError::ExecutionLimit("Render exceeded the configured time.".into()))??;
         if data.len() > CANVAS_LIMITS.max_output_bytes {
             return Err(CanvasError::ExecutionLimit("Encoded image exceeds 10 MB.".into()));
         }
