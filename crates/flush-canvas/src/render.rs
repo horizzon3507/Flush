@@ -393,6 +393,31 @@ pub(crate) fn render_scene(scene: &Scene, options: &RenderOptions) -> Result<Can
         fonts.custom.insert((font.family.clone(), font.weight), parsed);
     }
 
+    // Largest box each source is drawn at, in physical pixels: decoded
+    // images are downscaled to it so a gallery of big photos does not hold
+    // full-resolution RGBA buffers it never paints.
+    let scale = scene.scale as f64;
+    let mut wanted: HashMap<String, (u32, u32)> = HashMap::new();
+    for op in &scene.operations {
+        let (key, w, h) = match op {
+            Operation::Image(source, o) => (source.key(), o.width, o.height),
+            Operation::Avatar(source, o) => (source.key(), o.size, o.size),
+            Operation::Badges(items, _) => {
+                for item in items {
+                    if let Some(icon) = &item.icon {
+                        let e = wanted.entry(icon.key()).or_insert((0, 0));
+                        e.0 = e.0.max((16.0 * scale).ceil() as u32);
+                        e.1 = e.1.max((16.0 * scale).ceil() as u32);
+                    }
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        let e = wanted.entry(key).or_insert((0, 0));
+        e.0 = e.0.max((w * scale).ceil() as u32).min(pw);
+        e.1 = e.1.max((h * scale).ceil() as u32).min(ph);
+    }
     let mut images: HashMap<String, image::RgbaImage> = HashMap::new();
     for op in &scene.operations {
         match op {
@@ -407,6 +432,15 @@ pub(crate) fn render_scene(scene: &Scene, options: &RenderOptions) -> Result<Can
                 }
             }
             _ => {}
+        }
+    }
+    for (key, rgba) in images.iter_mut() {
+        if let Some(&(tw, th)) = wanted.get(key) {
+            if rgba.width() > tw.max(1) || rgba.height() > th.max(1) {
+                *rgba = image::DynamicImage::ImageRgba8(rgba.clone())
+                    .resize(tw.max(1), th.max(1), image::imageops::FilterType::Lanczos3)
+                    .to_rgba8();
+            }
         }
     }
 
@@ -474,6 +508,14 @@ pub(crate) fn render_scene(scene: &Scene, options: &RenderOptions) -> Result<Can
                     LineCap::Square => tiny_skia::LineCap::Square,
                 };
                 let stroke_cfg = Stroke { width: o.width.unwrap_or(1.0) as f32, line_cap: cap, ..Default::default() };
+                if let Some(sh) = &o.paint.shadow {
+                    if let Some(outline) = path.stroke(
+                        &stroke_cfg,
+                        tiny_skia_path::PathStroker::compute_resolution_scale(&base),
+                    ) {
+                        draw_shadow(&mut canvas, &outline, sh, base);
+                    }
+                }
                 canvas.stroke_path(&path, &solid_paint(o.color.as_deref().unwrap_or("#ffffff"), alpha)?, &stroke_cfg, base, None);
             }
             Operation::Image(source, o) => {
@@ -562,6 +604,14 @@ fn draw_text(
         .map(|m| m.ascent as f64)
         .unwrap_or(physical_size);
     let (ox, oy) = shadow.map(|sh| (sh.offset_x * scale, sh.offset_y * scale)).unwrap_or((0.0, 0.0));
+    let blur = shadow.map(|sh| sh.blur).unwrap_or(0.0);
+    // A blurred shadow is drawn to a scratch pixmap, blurred, then composited.
+    let mut scratch = if blur > 0.0 {
+        Pixmap::new(canvas.width(), canvas.height())
+    } else {
+        None
+    };
+    let dest: &mut Pixmap = scratch.as_mut().unwrap_or(canvas);
     let max_width = o.max_width.unwrap_or(1.0);
     for (i, line) in layout.lines.iter().enumerate() {
         let line_width = measure(font, line, physical_size) / scale;
@@ -573,7 +623,16 @@ fn draw_text(
         let baseline = (o.y + i as f64 * layout.size * layout.line_height) * scale + ascent + oy;
         let mut pen = GlyphPen { pen_x: x, baseline_y: baseline, color, alpha };
         for ch in line.chars() {
-            pen.pen_x += draw_glyph(canvas, font, ch, physical_size, &pen);
+            pen.pen_x += draw_glyph(dest, font, ch, physical_size, &pen);
+        }
+    }
+    if let Some(tmp) = scratch {
+        let rgba = image::RgbaImage::from_raw(tmp.width(), tmp.height(), tmp.take_demultiplied());
+        if let Some(rgba) = rgba {
+            let blurred = image::imageops::blur(&rgba, blur as f32);
+            if let Ok(pix) = rgba_to_pixmap(blurred) {
+                canvas.draw_pixmap(0, 0, pix.as_ref(), &PixmapPaint::default(), Transform::default(), None);
+            }
         }
     }
     Ok(())
@@ -594,7 +653,11 @@ fn draw_image_op(
     let scale_x = base.sx as f64;
     let scale_y = base.sy as f64;
     let fit = o.fit.unwrap_or(ImageFit::Cover);
-    let (tw, th) = ((o.width * scale_x).max(1.0) as u32, (o.height * scale_y).max(1.0) as u32);
+    // Resize work is bounded by what the canvas can actually show.
+    let (tw, th) = (
+        (o.width * scale_x).max(1.0).min(canvas.width() as f64) as u32,
+        (o.height * scale_y).max(1.0).min(canvas.height() as f64) as u32,
+    );
     img = match fit {
         ImageFit::Stretch => img.resize_exact(tw, th, image::imageops::FilterType::Lanczos3),
         ImageFit::Contain => img.resize(tw, th, image::imageops::FilterType::Lanczos3),
@@ -736,6 +799,9 @@ fn draw_badges(
             o.fill.as_deref().unwrap_or("#202938")
         };
         let path = rounded_path(o.x + cursor, o.y, width, height, radius);
+        if let Some(sh) = &o.paint.shadow {
+            draw_shadow(canvas, &path, sh, base);
+        }
         canvas.fill_path(&path, &solid_paint(fill, alpha)?, FillRule::Winding, base, None);
         let mut text_x = o.x + cursor + padding;
         if let Some(icon) = icon {
