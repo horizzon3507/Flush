@@ -16,6 +16,7 @@ pub use flush_rest as rest;
 
 #[cfg(feature = "sqlite")]
 pub use flush_framework::SqliteStore;
+pub use flush_framework::{bot_from_project, ConfigError, ProjectConfig};
 pub use flush_framework::{
     with_mod_action, CaseStore, CaseType, ModAction, ModCase, PermissionAction,
 };

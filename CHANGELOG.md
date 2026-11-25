@@ -13,6 +13,12 @@ Each release heading is the version and date (`## v0.1.1 · 17/10/2026`); under 
 
 </details>
 
+## Unreleased
+
+- **CLI**: new `flush-cli` crate with the `flush` binary, ported from Yuzuha's CLI: `init` (with the `simple`, `moderation` and `entertainment` templates and `--local`), `templates`, `check` (`--build` compiles the project), `doctor`, `data stats|backup|restore` for the JSON stores, `run` and `dev` (rebuilds and restarts on source, config or `.env` changes; a failed build keeps the running version). Commands that wait on function mode, sharding or the SQLite store answer `UNSUPPORTED`. See `docs/CLI.md`.
+- **Framework — project config**: `ProjectConfig` reads `flush.toml`, `load_env` / `read_env_file` / `parse_env` read `.env`, and `bot_from_project` builds a `Bot` from both.
+- `CommandError::Internal` now prints `internal: ...` (it was still `interno: ...`).
+
 ## v0.2.0 · 19/11/2026
 
 First parity release against `@fluxerjs` 3.3.0 and Yuzuha 0.8.0, and the whole project is now in English. This version was made for the Flush lib on 19/11/2026 (v0.2.0).

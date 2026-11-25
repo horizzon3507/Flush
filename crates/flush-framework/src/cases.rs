@@ -83,11 +83,7 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 fn default_path() -> PathBuf {
-    let dir = std::env::var("FLUSH_DATA_DIR")
-        .or_else(|_| std::env::var("SOUR_DATA_DIR"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("data"));
-    dir.join("cases.json")
+    crate::guild_store::default_data_dir().join("cases.json")
 }
 
 #[derive(Debug)]
@@ -112,6 +108,11 @@ impl CaseStore {
 
     pub fn with_default_path() -> Self {
         Self::new(default_path())
+    }
+
+    /// Number the next case of this guild will get.
+    pub fn next_id(&mut self, guild_id: &str) -> u64 {
+        self.load().get(guild_id).map_or(1, GuildCases::next)
     }
 
     /// Records a case. `Err` means nothing was saved, so the id must not be
@@ -251,7 +252,9 @@ mod tests {
     fn sequential_ids_and_revert() {
         let dir = std::env::temp_dir().join(format!("flush-cases-{}", std::process::id()));
         let mut store = CaseStore::new(dir.join("cases.json"));
+        assert_eq!(store.next_id("g"), 1);
         let c1 = store.add("g", CaseType::Warn, "u", "m", "spam").unwrap();
+        assert_eq!(store.next_id("g"), 2);
         let c2 = store.add("g", CaseType::Warn, "u", "m", "spam2").unwrap();
         assert_eq!((c1.id, c2.id), (1, 2));
         assert_eq!(store.active_warns("g", "u"), 2);

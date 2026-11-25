@@ -20,5 +20,6 @@ url = "2"
 log = "0.4"
 async-tungstenite = { version = "0.35", features = ["async-std-runtime", "async-native-tls"] }
 surf = { version = "2", default-features = false, features = ["h1-client-rustls"] }
+toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 fs4 = { version = "0.13", default-features = false, features = ["sync"] }
