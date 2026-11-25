@@ -520,8 +520,10 @@ mod tests {
         let dir = temp("descendants");
         let fake = dir.join("cargo");
         // Stands in for rustc: a child that outlives a killed parent, and
-        // shows it is alive by writing to a file.
-        let script = "#!/bin/sh\n(while :; do echo beat >> beats; sleep 0.1; done) &\nwait\n";
+        // shows it is alive by writing to a file. It gives up by itself after
+        // 100 beats, so a failed test leaves nothing running.
+        let script =
+            "#!/bin/sh\n(for beat in $(seq 100); do echo beat >> beats; sleep 0.1; done) &\nwait\n";
         std::fs::write(&fake, script).unwrap();
         std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
             .unwrap();
