@@ -117,6 +117,20 @@ fn guild_flat_decodes() {
 }
 
 #[test]
+fn malformed_nested_guild_fails_instead_of_degrading_to_flat() {
+    // `properties` present but broken: the payload is nested, so parsing
+    // must fail (Unknown at the event layer) rather than silently drop
+    // every nested field by reading the flat shape.
+    let g: Result<Guild, _> = serde_json::from_value(serde_json::json!({
+        "id": "100",
+        "properties": "not-an-object",
+        "name": "Flat",
+        "owner_id": "1"
+    }));
+    assert!(g.is_err());
+}
+
+#[test]
 fn ready_with_null_lists() {
     let env: DispatchEnvelope = serde_json::from_value(serde_json::json!({
         "op": 0, "t": "READY", "s": 1,
