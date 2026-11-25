@@ -60,6 +60,10 @@ fn field(source: &str, min: i64, max: i64) -> Result<Vec<i64>, CronError> {
             None => (part, ""),
         };
         let has_step = part.contains('/');
+        if has_step && step.is_empty() {
+            // `15/` has no step: refuse rather than expand to every 1.
+            return Err(CronError::Field);
+        }
         let step: i64 = if step.is_empty() {
             1
         } else {
@@ -234,6 +238,10 @@ mod tests {
             Err(CronError::Unreachable)
         ));
         assert!(matches!(parse_cron("0 0 * * x"), Err(CronError::Field)));
+        // A `/` with no step is invalid, not `step 1`.
+        assert!(matches!(parse_cron("15/ * * * *"), Err(CronError::Field)));
+        assert!(matches!(parse_cron("*/ * * * *"), Err(CronError::Field)));
+        assert!(matches!(parse_cron("10-20/ * * * *"), Err(CronError::Field)));
     }
 
     #[test]
@@ -297,13 +305,17 @@ mod tests {
     }
 
     #[test]
-    fn fold_minutes_run() {
-        // America/New_York 2024-11-03: 01:30 happens twice.
-        // After 2024-11-03 05:30 UTC (after the first 01:30 EDT at 05:30? first 01:30 = 05:30 UTC)
-        // both occurrences should be reachable strictly after `after`.
-        let after = Timestamp::from_second(1_730_600_000).unwrap().as_millisecond();
-        let next = next_cron("30 1 * * *", "America/New_York", after).unwrap();
-        let zoned = Timestamp::from_millisecond(next)
+    fn fold_minutes_run_twice() {
+        // America/New_York 2024-11-03: local 01:30 happened twice, first at
+        // 05:30 UTC (EDT) and again one hour later at 06:30 UTC (EST).
+        let first = Timestamp::from_second(1_730_611_800)
+            .unwrap()
+            .as_millisecond();
+        let next = next_cron("30 1 * * *", "America/New_York", first - 1).unwrap();
+        assert_eq!(next, first);
+        let second = next_cron("30 1 * * *", "America/New_York", next).unwrap();
+        assert_eq!(second, first + 3_600_000);
+        let zoned = Timestamp::from_millisecond(second)
             .unwrap()
             .to_zoned_datetime(TimeZone::get("America/New_York").unwrap());
         assert_eq!((zoned.hour(), zoned.minute()), (1, 30));
