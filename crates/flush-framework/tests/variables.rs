@@ -103,6 +103,17 @@ fn transactions<S: VariableStore>(store: S) {
     assert_eq!(vars.get(Guild, "coins").unwrap(), Some(json!(10)));
     assert_eq!(vars.get(User, "bought").unwrap(), None);
 
+    // That holds for a delete and for a value written twice.
+    let failed = vars.transaction(|tx| {
+        tx.guild().delete("coins")?;
+        tx.user().set("bought", json!(1), None)?;
+        tx.user().set("bought", json!(2), None)?;
+        tx.guild().set("", json!(1), None)
+    });
+    assert!(matches!(failed, Err(VariableError::Name)));
+    assert_eq!(vars.get(Guild, "coins").unwrap(), Some(json!(10)));
+    assert_eq!(vars.get(User, "bought").unwrap(), None);
+
     // Writes are visible to later reads in the same transaction.
     let seen = vars
         .transaction(|tx| {

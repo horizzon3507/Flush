@@ -298,6 +298,44 @@ fn imports_the_json_stores() {
         4
     );
 
+    // Each file parses as the other kind; importing it there is refused and
+    // changes nothing.
+    assert!(matches!(
+        store.import_guilds_json(&cases_path),
+        Err(StoreError::Import(_))
+    ));
+    assert_eq!(store.prefix(Some("g1")).unwrap(), "$");
+    assert!(matches!(
+        store.import_cases_json(&guilds_path),
+        Err(StoreError::Import(_))
+    ));
+    assert_eq!(store.cases_for_user("g1", "u2", 10).unwrap().len(), 4);
+
+    // A repeated field or guild id is refused, not settled by the last one.
+    let repeated = dir.file("repeated.json");
+    for text in [
+        r#"{"g1": {"prefix": "!", "prefix": "?"}}"#,
+        r#"{"g1": {"automod": {"enabled": true, "enabled": false}}}"#,
+        r#"{"g1": {"prefix": "!"}, "g1": {"prefix": "?"}}"#,
+    ] {
+        std::fs::write(&repeated, text).unwrap();
+        assert!(matches!(
+            store.import_guilds_json(&repeated),
+            Err(StoreError::Corrupt)
+        ));
+    }
+    assert_eq!(store.prefix(Some("g1")).unwrap(), "$");
+    for text in [
+        r#"{"g9": {"next_id": 1, "cases": [], "cases": []}}"#,
+        r#"{"g9": {"next_id": 1}, "g9": {"next_id": 2}}"#,
+    ] {
+        std::fs::write(&repeated, text).unwrap();
+        assert!(matches!(
+            store.import_cases_json(&repeated),
+            Err(StoreError::Corrupt)
+        ));
+    }
+
     assert_eq!(
         store.import_cases_json(&dir.file("missing.json")).unwrap(),
         0
