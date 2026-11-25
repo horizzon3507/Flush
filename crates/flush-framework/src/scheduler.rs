@@ -26,6 +26,7 @@ impl JobHandle {
 #[derive(Debug, Default, Clone)]
 pub struct Scheduler {
     jobs: Arc<Mutex<Vec<JobHandle>>>,
+    paused: Arc<AtomicBool>,
 }
 
 impl Scheduler {
@@ -51,12 +52,13 @@ impl Scheduler {
     {
         let handle = self.register();
         let flag = handle.clone();
+        let paused = self.paused.clone();
         async_std::task::spawn(async move {
             async_std::task::sleep(delay).await;
-            if !flag.is_cancelled() {
+            if !flag.is_cancelled() && !paused.load(Ordering::SeqCst) {
                 job().await;
-                flag.cancel();
             }
+            flag.cancel();
         });
         handle
     }
@@ -70,11 +72,15 @@ impl Scheduler {
     {
         let handle = self.register();
         let flag = handle.clone();
+        let paused = self.paused.clone();
         async_std::task::spawn(async move {
             loop {
                 async_std::task::sleep(period).await;
                 if flag.is_cancelled() {
                     break;
+                }
+                if paused.load(Ordering::SeqCst) {
+                    continue;
                 }
                 job().await;
             }
@@ -86,6 +92,17 @@ impl Scheduler {
     pub fn active(&self) -> usize {
         let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         jobs.iter().filter(|j| !j.is_cancelled()).count()
+    }
+
+    /// While paused, due jobs are skipped (a one-shot job that comes due is
+    /// dropped). A sharded bot pauses the scheduler on processes that should
+    /// not run jobs.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::SeqCst);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
     }
 
     pub fn cancel_all(&self) {

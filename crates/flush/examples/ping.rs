@@ -178,6 +178,7 @@ impl Hooks for JoinLogger {
                 | HookEvent::GuildAdd(_)
                 | HookEvent::MemberLeave { .. }
                 | HookEvent::Message(_)
+                | HookEvent::ShardStatus { .. }
                 | HookEvent::Raw(_) => {}
             }
         })

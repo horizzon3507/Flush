@@ -11,6 +11,7 @@
 //! - Scoped variables ([`VariableService`]) over memory or SQLite (`SqliteStore`).
 pub mod args;
 pub mod cases;
+pub mod cluster;
 pub mod collector;
 pub mod command;
 pub mod cooldown;
@@ -22,6 +23,7 @@ pub mod parse;
 pub mod project;
 pub mod router;
 pub mod scheduler;
+pub mod sharding;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 pub mod store_lock;
@@ -29,6 +31,10 @@ pub mod variables;
 
 pub use args::{parse_bool, parse_channel, parse_duration, parse_role, parse_user, ArgError, Args};
 pub use cases::{CaseStore, CaseType, ModCase};
+pub use cluster::{
+    Cluster, ClusterEntry, ClusterError, ClusterEvent, ClusterRuntimeInfo, RuntimeFuture,
+    RuntimeStatus,
+};
 pub use collector::{CollectedReaction, Collector, Collectors};
 pub use command::{info_block, mod_success, plain_error};
 pub use command::{Command, CommandCtx, CommandError, CommandResult};
@@ -44,6 +50,9 @@ pub use project::{
 };
 pub use router::{Bot, BotConfig, HookEvent, Hooks, NoHooks};
 pub use scheduler::{JobHandle, Scheduler};
+pub use sharding::{
+    should_start_sharded_jobs, BotShard, ShardCount, ShardEnv, ShardSchedulerMode, ShardingOptions,
+};
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
 pub use store_lock::StoreLock;

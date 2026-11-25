@@ -124,6 +124,8 @@ pub struct GatewayClient {
     heartbeat_interval: Duration,
     backoff_attempts: u32,
     ready: bool,
+    /// Set once Identify/Resume went out; a handshake dropped halfway reconnects.
+    handshaken: bool,
 }
 
 impl GatewayClient {
@@ -137,6 +139,7 @@ impl GatewayClient {
             heartbeat_interval: Duration::from_millis(41_250),
             backoff_attempts: 0,
             ready: false,
+            handshaken: false,
         })
     }
 
@@ -152,22 +155,38 @@ impl GatewayClient {
         self.ready
     }
 
+    /// Whether a socket is open and Identify/Resume went out on it.
+    pub fn is_connected(&self) -> bool {
+        self.ws.is_some() && self.handshaken
+    }
+
+    /// `(shard_id, shard_count)` sent on Identify, when sharded.
+    pub fn shard(&self) -> Option<(u32, u32)> {
+        self.config.shard
+    }
+
+    /// Drops the socket so the next [`GatewayClient::next_event`] reconnects
+    /// (resuming when a session exists).
+    pub fn disconnect(&mut self) {
+        self.ws = None;
+        self.handshaken = false;
+    }
+
     /// Next typed event. Returns `Ok(None)` on heartbeat ACKs and
     /// windows without a Dispatch (the caller keeps looping).
     /// Reconnecting with Resume is internal; only token/shard/version errors are fatal.
     pub async fn next_event(&mut self) -> Result<Option<Event>, ConnectError> {
-        loop {
-            if self.ws.is_none() {
-                self.connect_once().await?;
-            }
-            match self.step().await? {
-                Step::Event(ev) => return Ok(Some(*ev)),
-                Step::NoEvent => return Ok(None),
-                Step::Reconnect => {
-                    self.ws = None;
-                    self.backoff().await;
-                    continue;
-                }
+        if self.ws.is_none() || !self.handshaken {
+            self.connect_once().await?;
+        }
+        match self.step().await? {
+            Step::Event(ev) => Ok(Some(*ev)),
+            Step::NoEvent => Ok(None),
+            Step::Reconnect => {
+                // Returning lets a supervisor see the drop; the next call reconnects.
+                self.disconnect();
+                self.backoff().await;
+                Ok(None)
             }
         }
     }
@@ -235,6 +254,7 @@ impl GatewayClient {
     }
 
     async fn connect_once(&mut self) -> Result<(), ConnectError> {
+        self.handshaken = false;
         let url = gateway_url_with_params(&self.config.gateway_url);
         debug!("gateway: conectando {url}");
         #[allow(deprecated)]
@@ -285,6 +305,7 @@ impl GatewayClient {
             debug!("gateway: identify sent");
         }
         self.backoff_attempts = 0;
+        self.handshaken = true;
         Ok(())
     }
 
