@@ -183,6 +183,13 @@ fn read_backup(path: &Path) -> Result<(String, Store), CliError> {
 }
 
 fn write_atomic(path: &Path, store: &Store) -> Result<(), CliError> {
+    // A fresh project has no data directory until the bot first writes.
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
     let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
     std::fs::write(&tmp, serde_json::to_string_pretty(store)?)?;
     std::fs::rename(&tmp, path)?;
@@ -411,6 +418,44 @@ mod tests {
         let restored = run(DataOperation::Restore, true).unwrap();
         assert_eq!(restored["kind"], "cases");
         assert_eq!(restored["guilds_after"], 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn restore_creates_the_data_directory_of_a_fresh_project() {
+        let dir = temp("fresh");
+        let seed = dir.join("cases.json");
+        let backup = dir.join("backup.json");
+        std::fs::write(&seed, cases()).unwrap();
+        data_command(
+            DataOperation::Backup,
+            &seed,
+            Some(&backup),
+            false,
+            RestorePolicy::Replace,
+        )
+        .unwrap();
+        let store = dir.join("project/data/cases.json");
+        let restore = |apply| {
+            data_command(
+                DataOperation::Restore,
+                &store,
+                Some(&backup),
+                apply,
+                RestorePolicy::Replace,
+            )
+            .unwrap()
+        };
+        assert_eq!(restore(false)["dry_run"], true);
+        assert!(!store.parent().unwrap().exists());
+        assert_eq!(restore(true)["guilds_after"], 2);
+        assert_eq!(
+            std::fs::read_to_string(&store)
+                .unwrap()
+                .matches("spam")
+                .count(),
+            3
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
