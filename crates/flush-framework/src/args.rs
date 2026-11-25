@@ -30,7 +30,7 @@ fn strip_mention(raw: &str, prefixes: &[&str]) -> Option<Snowflake> {
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    digits.parse::<u64>().ok().map(Snowflake)
+    digits.parse::<Snowflake>().ok()
 }
 
 /// `<@id>`, `<@!id>` or a bare ID.
@@ -201,6 +201,8 @@ mod tests {
         assert_eq!(parse_channel("<#9>"), Some(Snowflake(9)));
         assert_eq!(parse_role("<@7>"), None);
         assert_eq!(parse_user("abc"), None);
+        assert_eq!(parse_user("007"), None);
+        assert_eq!(parse_user("<@18446744073709551615>"), None);
     }
 
     #[test]
