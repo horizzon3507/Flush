@@ -1,7 +1,7 @@
-//! Checks de moderação (espelho de `Sour lib/modPermissions.ts` + `lib/modCore.ts`).
+//! Moderation checks (mirrors `Sour lib/modPermissions.ts` + `lib/modCore.ts`).
 //!
-//! - `check_member`: executor tem a permissão da ação? (dono/ADMIN passam)
-//! - `check_hierarchy`: executor outranka o alvo? bot outranka o alvo?
+//! - `check_member`: does the executor hold the action's permission? (owner/ADMIN pass)
+//! - `check_hierarchy`: does the executor outrank the target? does the bot?
 
 use std::future::Future;
 
@@ -36,13 +36,13 @@ impl PermissionAction {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Kick => "Expulsar Membros",
-            Self::Ban => "Banir Membros",
-            Self::Timeout | Self::Moderate => "Moderar Membros",
-            Self::Channel => "Gerenciar Canais",
-            Self::Messages => "Gerenciar Mensagens",
-            Self::Roles => "Gerenciar Cargos",
-            Self::Guild => "Gerenciar Servidor",
+            Self::Kick => "Kick Members",
+            Self::Ban => "Ban Members",
+            Self::Timeout | Self::Moderate => "Moderate Members",
+            Self::Channel => "Manage Channels",
+            Self::Messages => "Manage Messages",
+            Self::Roles => "Manage Roles",
+            Self::Guild => "Manage Server",
         }
     }
 }
@@ -50,9 +50,9 @@ impl PermissionAction {
 pub struct Moderation;
 
 impl Moderation {
-    /// Permissão efetiva = união everyone+cargos (+ overwrites do canal).
-    /// Ordem oficial: everyone overwrite → união roles → member overwrite.
-    /// ADMIN retorna máscara cheia (bypass de overwrite).
+    /// Effective permission = union of everyone + roles (+ channel overwrites).
+    /// Official order: everyone overwrite → role union → member overwrite.
+    /// ADMIN returns the full mask (bypasses overwrites).
     pub fn member_permissions(
         everyone_bits: u64,
         role_bits: &[u64],
@@ -98,10 +98,10 @@ impl Moderation {
         channel: Option<&Channel>,
         is_owner: bool,
     ) -> Option<String> {
-        Self::check_member_with_owner(guild, executor, action, channel, is_owner, "Você precisa")
+        Self::check_member_with_owner(guild, executor, action, channel, is_owner, "You need")
     }
 
-    /// Variante com o sujeito da mensagem ("Você precisa" / "Meu bot precisa").
+    /// Variant taking the message subject ("You need" / "I need").
     pub fn check_member_with_owner(
         guild: &Guild,
         executor: Option<&MemberUser>,
@@ -133,13 +133,13 @@ impl Moderation {
             None
         } else {
             Some(plain_error(format!(
-                "{who} da permissão **{}** para isso.",
+                "{who} the **{}** permission for that.",
                 action.label()
             )))
         }
     }
 
-    /// Hierarquia: executor acima do alvo e bot acima do alvo (dono passa).
+    /// Hierarchy: executor above the target and bot above the target (owner passes).
     pub fn check_hierarchy(
         guild: &Guild,
         executor: Option<&MemberUser>,
@@ -153,19 +153,19 @@ impl Moderation {
             if !executor_is_owner
                 && guild.highest_role_position(e) <= guild.highest_role_position(t)
             {
-                return Some(plain_error("Seu cargo precisa estar acima do alvo."));
+                return Some(plain_error("Your role must be above the target's."));
             }
         }
         if let Some(b) = bot {
             if !bot_is_owner && guild.highest_role_position(b) <= guild.highest_role_position(t) {
-                return Some(plain_error("Meu cargo precisa estar acima do alvo."));
+                return Some(plain_error("My role must be above the target's."));
             }
         }
         None
     }
 }
 
-/// Parâmetros de [`with_mod_action`].
+/// Parameters for [`with_mod_action`].
 pub struct ModAction<'a, F> {
     pub ctx: &'a CommandCtx<'a>,
     pub executor: Option<&'a MemberUser>,
@@ -176,14 +176,14 @@ pub struct ModAction<'a, F> {
     pub success_description: &'a str,
     pub case_id: u64,
     pub extra: Option<&'a str>,
-    /// Canal de log de moderação (opcional). Recebe a mesma mensagem de
-    /// sucesso, sem ping. Erros de envio são ignorados.
+    /// Moderation log channel (optional). Receives the same success
+    /// message, without a ping. Send errors are ignored.
     pub log_channel: Option<Snowflake>,
     pub run: F,
 }
 
-/// Fluxo padrão: checks → `run` → resposta de sucesso.
-/// Retorna `Ok(true)` se executou (ou falhou com reply), `Ok(false)` se bloqueado nos checks.
+/// Standard flow: checks → `run` → success reply.
+/// Returns `Ok(true)` when `run` succeeded, `Ok(false)` when a check blocked it or `run` failed (after replying).
 pub async fn with_mod_action<F, Fut>(opts: ModAction<'_, F>) -> Result<bool, CommandError>
 where
     F: FnOnce() -> Fut,
@@ -203,7 +203,7 @@ where
         run,
     } = opts;
     let Some(g) = ctx.guild.as_ref() else {
-        ctx.reply_no_ping(plain_error("Este comando só funciona em servidores."))
+        ctx.reply_no_ping(plain_error("This command only works in servers."))
             .await?;
         return Ok(false);
     };
@@ -244,7 +244,7 @@ where
         }
         Err(detail) => {
             ctx.reply_no_ping(plain_error(format!(
-                "Não foi possível concluir a ação. {detail}"
+                "Could not complete the action. {detail}"
             )))
             .await?;
             Ok(false)

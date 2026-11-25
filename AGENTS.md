@@ -1,42 +1,52 @@
-# Flush (bot framework Rust)
+# Flush (Rust bot framework)
 
-> Framework/lib Rust para bots do **Fluxer** (`async-std`), paridade prática
-> com `@fluxerjs/core` 2.x. Espelha `jully-fluxer` e `Sour! (Fluxer)`.
+> Rust framework/library for **Fluxer** bots (`async-std`), tracking
+> `@fluxerjs` 3.3 and Yuzuha 0.8.0. Mirrors `jully-fluxer` and `Sour! (Fluxer)`.
+> Everything in this repository is written in English.
 
-## Comandos
+## Commands
 
 ```bash
 cargo check --workspace --all-targets
-cargo test --workspace          # 26 testes, sem rede
-cargo clippy --workspace --all-targets   # deve ficar zerado
-FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping   # conecta de verdade
+cargo test --workspace          # 57 tests, no network
+cargo clippy --workspace --all-targets   # must stay at zero warnings
+FLUXER_BOT_TOKEN=... cargo run -p flush-lib --example ping   # connects for real
 ```
 
-NUNCA rode o exemplo sem permissão explícita (abre WS + REST de produção).
-Para validar sem rede: `cargo test`, `cargo check`, `cargo clippy`.
-Sem token dummy com timeout aqui — o exemplo não aceita modo offline.
+NEVER run the example without explicit permission (it opens production WS + REST).
+To validate without the network: `cargo test`, `cargo check`, `cargo clippy`.
+There is no dummy token with a timeout here: the example has no offline mode.
 
-## Estrutura
+## Layout
 
 ```
-crates/flush-core/       tipos: Snowflake, permissões, entidades, Event::decode
+crates/flush-core/       types: Snowflake, permissions, entities, Event::decode
 crates/flush-gateway/    WS v1: Hello/Identify/Resume/Heartbeat + GatewayClient
-crates/flush-rest/       REST /v1: discovery, Bot <token>, mensagens/membros/bans
-crates/flush-framework/  router: prefixo, cooldown, GuildStore, CaseStore, moderação
-crates/flush/            fachada + examples/ping.rs (!ping round-trip, !help)
+crates/flush-rest/       REST /v1: discovery, Bot <token>, client.rs + resources.rs
+crates/flush-framework/  router: prefix, cooldown, args, middleware, collectors,
+                         scheduler, GuildStore, CaseStore, moderation
+crates/flush/            facade + examples/ping.rs (!ping round-trip, !help)
+docs/PARITY.md           what matches @fluxerjs / Yuzuha and what is deferred
 ```
 
-## Regras
+## Rules
 
-- Wire: Snowflake sempre string decimal; enums numéricos com fallback `Unknown`;
-  listas aceitam `null`; permissões string decimal; guild aninhada em
-  `properties` ou flat. Testes em `flush-core/tests/wire.rs` travam isso.
-- Reply: `message_reference` + `replied_user: false` quando sem ping.
+- Wire: Snowflake is always a decimal string; numeric enums fall back to `Unknown`;
+  lists accept `null`; permissions are decimal strings; guilds arrive nested under
+  `properties` or flat. Tests in `flush-core/tests/wire.rs` lock this in.
+- Reply: `message_reference` + `replied_user: false` when not pinging.
 - Ban `PUT .../bans/...`, timeout `PATCH` member, bulk-delete 1=`DELETE`/2–100=`POST`.
-- Roles: sem GET individual — lista + `find`.
-- Typing nunca falha comando.
-- Trait `Command::execute` retorna `Pin<Box<dyn Future>>` (object-safe);
-  `Future` via prelude/import, nunca `std::future::Future` inline;
-  match ergonomics (sem `ref`); sem comentário genérico de IA.
-- `with_mod_action` recebe `ModAction { ... }` (struct, não 10 args).
-- Nunca edite `.commandcode/taste/`.
+- Roles: `role()` lists + `find`s; `fetch_role()` uses the single-role route.
+- Typing never fails a command.
+- Token-scoped webhook routes go through `request_with(.., authed = false)`:
+  never send the bot token to them.
+- New gateway events: add the name to `DISPATCH_EVENTS`, a variant, its `kind()`
+  arm and a `decode_extended` arm; malformed payloads must fall back to `Unknown`.
+- `Command::execute` returns `Pin<Box<dyn Future>>` (object-safe);
+  `Future` via prelude/import, never inline `std::future::Future`;
+  match ergonomics (no `ref`); no generic AI comments.
+- Collectors must be awaited from a spawned task, never inside `execute`
+  (commands run inline on the event loop).
+- `with_mod_action` takes `ModAction { ... }` (a struct, not 10 args).
+- Update `docs/PARITY.md` when coverage changes.
+- Never edit `.commandcode/taste/`.

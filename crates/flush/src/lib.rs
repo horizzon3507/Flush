@@ -1,13 +1,13 @@
-//! Flush: framework/lib em Rust para bots do Fluxer.
+//! Flush: a Rust framework/library for Fluxer bots.
 //!
-//! Re-exporta os quatro crates:
+//! Re-exports the four crates:
 //!
-//! - `flush_core`: tipos (Snowflake, permissões, entidades, eventos)
+//! - `flush_core`: types (Snowflake, permissions, entities, events)
 //! - `flush_gateway`: Gateway WebSocket v1 (Hello/Identify/Resume/Heartbeat)
-//! - `flush_rest`: cliente REST `/v1` + discovery
-//! - `flush_framework`: roteador de comandos com prefixo
+//! - `flush_rest`: `/v1` REST client + discovery
+//! - `flush_framework`: prefix command router
 //!
-//! Exemplo mínimo em `examples/ping.rs` (`!ping` + `!help`).
+//! Minimal example in `examples/ping.rs` (`!ping` + `!help`).
 
 pub use flush_core as core;
 pub use flush_framework as framework;

@@ -1,7 +1,7 @@
-//! Cases de moderação (espelho de `Sour lib/cases.ts`).
+//! Moderation cases (mirrors `Sour lib/cases.ts`).
 //!
-//! JSON local com escrita atômica, Case # sequencial por servidor,
-//! contagem de warns ativos e reversão de warn.
+//! Local JSON with atomic writes, sequential Case # per server,
+//! active warn counting and warn reversal.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -146,7 +146,7 @@ impl CaseStore {
             .unwrap_or(0)
     }
 
-    /// Reverte um warn ativo (espelho de `revertWarnCase`).
+    /// Reverts an active warn (mirrors `revertWarnCase`).
     pub fn revert_warn(&mut self, guild_id: &str, user_id: &str, case_id: u64) -> Option<ModCase> {
         let mut store = self.load().clone();
         let entry = store.get_mut(guild_id)?;
@@ -167,7 +167,7 @@ impl CaseStore {
                     map = parsed;
                 }
             }
-            // Normaliza next_id para len+1 quando ausente.
+            // Normalize next_id to len+1 when absent.
             for g in map.values_mut() {
                 if g.next_id == 0 {
                     g.next_id = g.cases.iter().map(|c| c.id).max().unwrap_or(0) + 1;
@@ -175,7 +175,7 @@ impl CaseStore {
             }
             self.cache = Some(map);
         }
-        self.cache.as_ref().expect("cache carregado")
+        self.cache.as_ref().expect("cache loaded")
     }
 
     fn save(&mut self, store: &HashMap<String, GuildCases>) {

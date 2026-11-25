@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Tipos centrais do Flush: Snowflake, entidades e eventos (paridade com @fluxerjs/types)"
+description = "Core types for Flush: Snowflake, entities and events (parity with @fluxerjs/types)"
 
 [dependencies]
 serde.workspace = true

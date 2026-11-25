@@ -41,7 +41,7 @@ impl<'de> Deserialize<'de> for PresenceStatus {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Activity {
     pub name: String,
-    /// O wire usa `type`; renomeado para `kind` em Rust.
+    /// The wire uses `type`; renamed to `kind` in Rust.
     #[serde(default, rename = "type", deserialize_with = "crate::wire::null_i32")]
     pub kind: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,7 +49,7 @@ pub struct Activity {
 }
 
 impl Activity {
-    /// 4 = Custom (padrão usado pelo Sour para presença rotativa).
+    /// 4 = Custom (what Sour uses for rotating presence).
     pub fn custom(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
