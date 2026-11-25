@@ -38,16 +38,16 @@ What matches the two references, and what is still deferred, is tracked in
 - **Emojis and stickers**: list, get, create, bulk create, clone, rename/edit, delete, metadata.
 - **Guild**: get, `edit_guild`, `audit_logs` (`AuditLogQuery`), `vanity_url` / `set_vanity_url`, `guild_webhooks`.
 - **Applications**: `application`, `oauth2_application`.
+- **Attachments**: `send_message_with_files` (multipart) or `upload_attachments` (presigned upload plan) + `MessageSend::attachments`.
 - **Anything else**: `RestClient::raw(method, path, body, query, audit)`.
 - Every mutating method takes `audit: Option<&str>` → `X-Audit-Log-Reason` header.
 
 ## Gateway events
 
-`flush_core::DISPATCH_EVENTS` names all 80 dispatch events of the SDK. 47 decode
-into typed `Event` variants (guilds, channels, threads, messages, reactions,
-members, roles, bans, emojis, stickers, invites, webhooks, voice state, audit
-log entries, presence, typing); the rest arrive as `Event::Unknown` with the
-raw payload, and `Event::wire_name()` tells them apart.
+`flush_core::DISPATCH_EVENTS` names all 80 dispatch events of the SDK and every
+one decodes into a typed `Event` variant. A payload that does not match its
+type arrives as `Event::Unknown` with the raw payload, and
+`Event::wire_name()` tells them apart.
 
 ## Framework
 
@@ -124,7 +124,7 @@ Env: `FLUXER_BOT_TOKEN` (required), `PREFIX` (default `!`),
 ## Tests
 
 ```bash
-cargo test --workspace   # tolerant wire, routes, protocol, framework, CLI
+cargo test --workspace   # tolerant wire, routes, uploads, protocol, framework, CLI
 cargo test -p flush-cli --test cli -- --ignored   # builds, lints and tests every scaffold
 cargo clippy --workspace --all-targets  # zero warnings
 ```

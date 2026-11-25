@@ -9,11 +9,18 @@
 //!   members (get/list/patch/kick/roles), bans (put/delete/list),
 //!   roles (list), users (get), guild (get), gateway bot info.
 
+pub mod account;
 pub mod client;
 pub mod error;
 pub mod resources;
 pub mod routes;
+pub mod uploads;
 
+pub use account::{
+    BulkMessageRequest, ChannelMessages, DiscoveryApplication, DiscoveryRequest, DiscoveryStatus,
+    GuildCreate, PreloadedMessages, RoleHoistPosition, SudoVerification, ThreadMemberSettings,
+    ThreadMuteConfig,
+};
 pub use client::{
     BanOptions, ChannelPatch, EditMessageBody, GatewayBotInfo, GuildBan, InstanceEndpoints,
     MemberPatch, RestClient, RestConfig,
@@ -24,3 +31,7 @@ pub use resources::{
     StickerPatch, ThreadSearch, UserGuild, VanityUrl, WebhookPatch,
 };
 pub use routes::Routes;
+pub use uploads::{
+    multipart_body, split_parts, AttachmentUploadComplete, AttachmentUploadPart,
+    AttachmentUploadPlan, AttachmentUploadRequest, FileUpload,
+};

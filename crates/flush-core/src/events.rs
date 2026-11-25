@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 use crate::audit_log::AuditLogEntry;
 use crate::channel::Channel;
 use crate::emoji::{Emoji, Sticker};
+use crate::gateway_events::{
+    AuthSessionChange, Call, ChannelMemberCount, EntranceSoundPlay, FavoriteMeme, ForumUnread,
+    GatewaySession, GuildCount, GuildMemberListUpdate, GuildSync, PassiveUpdates, ReactionAddEntry,
+    RecentMentionDelete, Relationship, ThreadMemberListEntry, UserConnection, UserGuildSettings,
+    UserSettings, VoiceStateAck, WebAuthnCredential,
+};
 use crate::guild::{Guild, Role};
 use crate::invite::Invite;
 use crate::message::{Message, ReactionEmoji};
@@ -216,7 +222,82 @@ pub enum Event {
     },
     VoiceStateUpdate(VoiceState),
     VoiceServerUpdate(VoiceServerUpdate),
-    /// Event without a dedicated type yet: name + raw payload.
+    AuthSessionChange(AuthSessionChange),
+    CallCreate(Call),
+    CallUpdate(Call),
+    CallDelete {
+        id: Snowflake,
+        channel_id: Snowflake,
+    },
+    ChannelMemberCountsUpdate {
+        counts: Vec<ChannelMemberCount>,
+    },
+    ChannelPinsAck {
+        channel_id: Snowflake,
+        last_pin_timestamp: Option<String>,
+    },
+    EntranceSoundPlay(EntranceSoundPlay),
+    FavoriteMemeCreate(FavoriteMeme),
+    FavoriteMemeUpdate(FavoriteMeme),
+    FavoriteMemeDelete(FavoriteMeme),
+    ForumUnreads {
+        guild_id: Snowflake,
+        channel_id: Snowflake,
+        threads: Vec<ForumUnread>,
+    },
+    GuildCountsUpdate {
+        counts: Vec<GuildCount>,
+    },
+    GuildMemberListUpdate(GuildMemberListUpdate),
+    GuildSync(GuildSync),
+    MessageAck {
+        channel_id: Snowflake,
+        message_id: Snowflake,
+    },
+    MessageReactionAddMany {
+        channel_id: Snowflake,
+        message_id: Snowflake,
+        guild_id: Option<Snowflake>,
+        reactions: Vec<ReactionAddEntry>,
+    },
+    PassiveUpdates(PassiveUpdates),
+    PresenceUpdateBulk {
+        guild_id: Option<Snowflake>,
+        presences: Vec<PresencePayload>,
+    },
+    RecentMentionDelete(RecentMentionDelete),
+    RelationshipAdd(Relationship),
+    RelationshipUpdate(Relationship),
+    RelationshipRemove {
+        id: Snowflake,
+    },
+    SavedMessageCreate(Message),
+    SavedMessageDelete {
+        id: Snowflake,
+    },
+    SessionsReplace {
+        sessions: Vec<GatewaySession>,
+    },
+    ThreadMemberListUpdate {
+        guild_id: Snowflake,
+        thread_id: Snowflake,
+        members: Vec<ThreadMemberListEntry>,
+    },
+    UserConnectionsUpdate {
+        connections: Vec<UserConnection>,
+    },
+    UserGuildSettingsUpdate(UserGuildSettings),
+    UserNoteUpdate {
+        id: Snowflake,
+        note: Option<String>,
+    },
+    UserPinnedDmsUpdate {
+        pinned_channels: Vec<Snowflake>,
+    },
+    UserSettingsUpdate(UserSettings),
+    VoiceStateAck(VoiceStateAck),
+    WebAuthnCredentialsUpdate(Vec<WebAuthnCredential>),
+    /// Unrecognized name, or a payload that did not match its type: name + raw payload.
     Unknown {
         kind: String,
         seq: u64,
@@ -284,6 +365,39 @@ impl Event {
             Self::WebhooksUpdate { .. } => "WEBHOOKS_UPDATE",
             Self::VoiceStateUpdate(_) => "VOICE_STATE_UPDATE",
             Self::VoiceServerUpdate(_) => "VOICE_SERVER_UPDATE",
+            Self::AuthSessionChange(_) => "AUTH_SESSION_CHANGE",
+            Self::CallCreate(_) => "CALL_CREATE",
+            Self::CallUpdate(_) => "CALL_UPDATE",
+            Self::EntranceSoundPlay(_) => "ENTRANCE_SOUND_PLAY",
+            Self::FavoriteMemeCreate(_) => "FAVORITE_MEME_CREATE",
+            Self::FavoriteMemeUpdate(_) => "FAVORITE_MEME_UPDATE",
+            Self::FavoriteMemeDelete(_) => "FAVORITE_MEME_DELETE",
+            Self::GuildMemberListUpdate(_) => "GUILD_MEMBER_LIST_UPDATE",
+            Self::GuildSync(_) => "GUILD_SYNC",
+            Self::PassiveUpdates(_) => "PASSIVE_UPDATES",
+            Self::RecentMentionDelete(_) => "RECENT_MENTION_DELETE",
+            Self::RelationshipAdd(_) => "RELATIONSHIP_ADD",
+            Self::RelationshipUpdate(_) => "RELATIONSHIP_UPDATE",
+            Self::SavedMessageCreate(_) => "SAVED_MESSAGE_CREATE",
+            Self::UserGuildSettingsUpdate(_) => "USER_GUILD_SETTINGS_UPDATE",
+            Self::UserSettingsUpdate(_) => "USER_SETTINGS_UPDATE",
+            Self::VoiceStateAck(_) => "VOICE_STATE_ACK",
+            Self::WebAuthnCredentialsUpdate(_) => "WEBAUTHN_CREDENTIALS_UPDATE",
+            Self::CallDelete { .. } => "CALL_DELETE",
+            Self::ChannelMemberCountsUpdate { .. } => "CHANNEL_MEMBER_COUNTS_UPDATE",
+            Self::ChannelPinsAck { .. } => "CHANNEL_PINS_ACK",
+            Self::ForumUnreads { .. } => "FORUM_UNREADS",
+            Self::GuildCountsUpdate { .. } => "GUILD_COUNTS_UPDATE",
+            Self::MessageAck { .. } => "MESSAGE_ACK",
+            Self::MessageReactionAddMany { .. } => "MESSAGE_REACTION_ADD_MANY",
+            Self::PresenceUpdateBulk { .. } => "PRESENCE_UPDATE_BULK",
+            Self::RelationshipRemove { .. } => "RELATIONSHIP_REMOVE",
+            Self::SavedMessageDelete { .. } => "SAVED_MESSAGE_DELETE",
+            Self::SessionsReplace { .. } => "SESSIONS_REPLACE",
+            Self::ThreadMemberListUpdate { .. } => "THREAD_MEMBER_LIST_UPDATE",
+            Self::UserConnectionsUpdate { .. } => "USER_CONNECTIONS_UPDATE",
+            Self::UserNoteUpdate { .. } => "USER_NOTE_UPDATE",
+            Self::UserPinnedDmsUpdate { .. } => "USER_PINNED_DMS_UPDATE",
             Self::Unknown { .. } => "UNKNOWN",
         }
     }
@@ -540,7 +654,8 @@ impl Event {
 }
 
 /// Every dispatch name in `GatewayDispatchEvents` of `@fluxerjs/types` 3.3.0.
-/// Names without a typed variant arrive as [`Event::Unknown`] with the raw payload.
+/// Every name has a typed variant; a payload that does not match its type
+/// arrives as [`Event::Unknown`] with the raw payload.
 pub const DISPATCH_EVENTS: &[&str] = &[
     "READY",
     "RESUMED",
@@ -638,6 +753,17 @@ fn field<T: for<'de> Deserialize<'de>>(data: &serde_json::Value, key: &str) -> O
 /// Missing or `null` is an empty list; a malformed entry is `None`, so the
 /// event falls back to `Unknown` and keeps its raw payload.
 fn list<T: for<'de> Deserialize<'de>>(data: &serde_json::Value, key: &str) -> Option<Vec<T>> {
+    match data.get(key) {
+        None | Some(serde_json::Value::Null) => Some(Vec::new()),
+        Some(v) => serde_json::from_value(v.clone()).ok(),
+    }
+}
+
+/// Missing or `null` is an empty list; anything else must decode in full.
+fn strict_list<T: for<'de> Deserialize<'de>>(
+    data: &serde_json::Value,
+    key: &str,
+) -> Option<Vec<T>> {
     match data.get(key) {
         None | Some(serde_json::Value::Null) => Some(Vec::new()),
         Some(v) => serde_json::from_value(v.clone()).ok(),
@@ -742,6 +868,86 @@ fn decode_extended(env: &DispatchEnvelope) -> Option<Event> {
         },
         "VOICE_STATE_UPDATE" => Event::VoiceStateUpdate(whole(d)?),
         "VOICE_SERVER_UPDATE" => Event::VoiceServerUpdate(whole(d)?),
+        "AUTH_SESSION_CHANGE" => Event::AuthSessionChange(whole(d)?),
+        "CALL_CREATE" => Event::CallCreate(whole(d)?),
+        "CALL_UPDATE" => Event::CallUpdate(whole(d)?),
+        "CALL_DELETE" => Event::CallDelete {
+            id: field(d, "id")?,
+            channel_id: field(d, "channel_id")?,
+        },
+        "CHANNEL_MEMBER_COUNTS_UPDATE" => Event::ChannelMemberCountsUpdate {
+            counts: strict_list(d, "counts")?,
+        },
+        "CHANNEL_PINS_ACK" => Event::ChannelPinsAck {
+            channel_id: field(d, "channel_id")?,
+            last_pin_timestamp: field(d, "last_pin_timestamp"),
+        },
+        "ENTRANCE_SOUND_PLAY" => Event::EntranceSoundPlay(whole(d)?),
+        "FAVORITE_MEME_CREATE" => Event::FavoriteMemeCreate(whole(d)?),
+        "FAVORITE_MEME_UPDATE" => Event::FavoriteMemeUpdate(whole(d)?),
+        "FAVORITE_MEME_DELETE" => Event::FavoriteMemeDelete(whole(d)?),
+        "FORUM_UNREADS" => Event::ForumUnreads {
+            guild_id: field(d, "guild_id")?,
+            channel_id: field(d, "channel_id")?,
+            threads: strict_list(d, "threads")?,
+        },
+        "GUILD_COUNTS_UPDATE" => Event::GuildCountsUpdate {
+            counts: strict_list(d, "counts")?,
+        },
+        "GUILD_MEMBER_LIST_UPDATE" => Event::GuildMemberListUpdate(whole(d)?),
+        "GUILD_SYNC" => Event::GuildSync(whole(d)?),
+        "MESSAGE_ACK" => Event::MessageAck {
+            channel_id: field(d, "channel_id")?,
+            message_id: field(d, "message_id")?,
+        },
+        "MESSAGE_REACTION_ADD_MANY" => Event::MessageReactionAddMany {
+            channel_id: field(d, "channel_id")?,
+            message_id: field(d, "message_id")?,
+            guild_id: field(d, "guild_id"),
+            reactions: strict_list(d, "reactions")?,
+        },
+        "PASSIVE_UPDATES" => Event::PassiveUpdates(whole(d)?),
+        "PRESENCE_UPDATE_BULK" => Event::PresenceUpdateBulk {
+            guild_id: field(d, "guild_id"),
+            presences: strict_list(d, "presences")?,
+        },
+        "RECENT_MENTION_DELETE" => Event::RecentMentionDelete(whole(d)?),
+        "RELATIONSHIP_ADD" => Event::RelationshipAdd(whole(d)?),
+        "RELATIONSHIP_UPDATE" => Event::RelationshipUpdate(whole(d)?),
+        "RELATIONSHIP_REMOVE" => Event::RelationshipRemove {
+            id: field(d, "id")?,
+        },
+        "SAVED_MESSAGE_CREATE" => Event::SavedMessageCreate(whole(d)?),
+        "SAVED_MESSAGE_DELETE" => Event::SavedMessageDelete {
+            id: field(d, "id")?,
+        },
+        "SESSIONS_REPLACE" => Event::SessionsReplace {
+            sessions: match d {
+                serde_json::Value::Array(_) => whole(d)?,
+                _ => strict_list(d, "sessions")?,
+            },
+        },
+        "THREAD_MEMBER_LIST_UPDATE" => Event::ThreadMemberListUpdate {
+            guild_id: field(d, "guild_id")?,
+            thread_id: field(d, "thread_id")?,
+            members: strict_list(d, "members")?,
+        },
+        "USER_CONNECTIONS_UPDATE" => Event::UserConnectionsUpdate {
+            connections: strict_list(d, "connections")?,
+        },
+        "USER_GUILD_SETTINGS_UPDATE" => Event::UserGuildSettingsUpdate(whole(d)?),
+        "USER_NOTE_UPDATE" => Event::UserNoteUpdate {
+            id: field(d, "id")?,
+            note: field(d, "note"),
+        },
+        "USER_PINNED_DMS_UPDATE" => Event::UserPinnedDmsUpdate {
+            pinned_channels: strict_list(d, "pinned_channels")?,
+        },
+        "USER_SETTINGS_UPDATE" => Event::UserSettingsUpdate(whole(d)?),
+        "VOICE_STATE_ACK" => Event::VoiceStateAck(whole(d)?),
+        "WEBAUTHN_CREDENTIALS_UPDATE" => {
+            Event::WebAuthnCredentialsUpdate(if d.is_null() { Vec::new() } else { whole(d)? })
+        }
         _ => return None,
     })
 }
