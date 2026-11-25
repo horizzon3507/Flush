@@ -179,6 +179,7 @@ impl Hooks for JoinLogger {
                 | HookEvent::MemberLeave { .. }
                 | HookEvent::Message(_)
                 | HookEvent::ShardStatus { .. }
+                | HookEvent::Voice(_)
                 | HookEvent::Raw(_) => {}
             }
         })

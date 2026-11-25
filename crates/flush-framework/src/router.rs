@@ -94,6 +94,9 @@ pub enum HookEvent<'a> {
         shard_id: u32,
         status: flush_gateway::ShardStatus,
     },
+    /// A normalized, sanitized voice event from [`crate::voice::Voice`]
+    /// (driver tokens and endpoints are never exposed).
+    Voice(&'a crate::voice::VoiceEvent),
 }
 
 /// Event hooks from the `Bot` cache (ready, guilds, members, messages).
@@ -124,6 +127,12 @@ pub struct Bot {
     collectors: crate::collector::Collectors,
     scheduler: crate::scheduler::Scheduler,
     shard: Arc<std::sync::RwLock<crate::sharding::BotShard>>,
+    voice: Option<crate::voice::Voice>,
+    /// Keeps the `voice_events` forwarding subscription alive.
+    voice_guard: Option<crate::voice::VoiceEventGuard>,
+    voice_states: crate::voice::VoiceStateTracker,
+    voice_tx: futures::channel::mpsc::UnboundedSender<crate::voice::VoiceEvent>,
+    voice_rx: futures::channel::mpsc::UnboundedReceiver<crate::voice::VoiceEvent>,
 }
 
 impl Bot {
@@ -135,6 +144,7 @@ impl Bot {
             Some(p) => GuildStore::new(p),
             None => GuildStore::with_default_path(),
         };
+        let (voice_tx, voice_rx) = futures::channel::mpsc::unbounded();
         Ok(Self {
             config,
             commands: Vec::new(),
@@ -155,6 +165,11 @@ impl Bot {
             collectors: crate::collector::Collectors::new(),
             scheduler: crate::scheduler::Scheduler::new(),
             shard: Arc::new(std::sync::RwLock::new(crate::sharding::BotShard::single())),
+            voice: None,
+            voice_guard: None,
+            voice_states: crate::voice::VoiceStateTracker::new(),
+            voice_tx,
+            voice_rx,
         })
     }
 
@@ -214,6 +229,27 @@ impl Bot {
 
     pub fn scheduler(&self) -> crate::scheduler::Scheduler {
         self.scheduler.clone()
+    }
+
+    /// Attaches a driver-backed [`crate::voice::Voice`] manager. Its
+    /// normalized events reach hooks as [`HookEvent::Voice`].
+    pub fn with_voice(mut self, voice: crate::voice::Voice) -> Self {
+        let tx = self.voice_tx.clone();
+        self.voice_guard = Some(voice.subscribe(move |ev| {
+            let _ = tx.unbounded_send(ev.clone());
+        }));
+        self.voice = Some(voice);
+        self
+    }
+
+    /// The voice connection manager, when one was attached.
+    pub fn voice(&self) -> Option<crate::voice::Voice> {
+        self.voice.clone()
+    }
+
+    /// The shared in-memory voice-state tracker (`bot.voiceStates`).
+    pub fn voice_states(&self) -> crate::voice::VoiceStateTracker {
+        self.voice_states.clone()
     }
 
     /// Registers event hooks (ready/guild/members/messages).
@@ -306,6 +342,8 @@ impl Bot {
                     self.rotate_presence(&mut gw).await;
                 }
             }
+            // Driver events must not wait for the next gateway dispatch.
+            self.drain_voice_events().await;
         }
     }
 
@@ -364,6 +402,7 @@ impl Bot {
                     }
                 }
             }
+            self.drain_voice_events().await;
         }
     }
 
@@ -387,6 +426,31 @@ impl Bot {
                     user_id: *user_id,
                     emoji: emoji.clone(),
                 }),
+            _ => {}
+        }
+        // Voice-state tracking (mirrors attachVoiceStates).
+        match &ev {
+            Event::VoiceStateUpdate(state) => self.voice_states.apply(state),
+            Event::VoiceStateAck(ack) => {
+                if let Some(state) = &ack.canonical_state {
+                    // The nested state may omit guild_id; the ack carries it.
+                    self.voice_states.apply_with_guild(state, ack.guild_id);
+                }
+            }
+            Event::Ready(r) => {
+                // The snapshot is authoritative: an empty list clears
+                // members who left while the bot was disconnected.
+                for g in &r.guilds {
+                    self.voice_states.sync_guild(g.id, &g.voice_states);
+                }
+            }
+            Event::GuildCreate(g) => {
+                self.voice_states.sync_guild(g.id, &g.voice_states);
+            }
+            Event::GuildDelete { id, .. } => self.voice_states.clear(Some(*id)),
+            Event::ChannelDelete(c) => {
+                self.voice_states.clear_channel(c.id, c.guild_id);
+            }
             _ => {}
         }
         match ev {
@@ -510,7 +574,21 @@ impl Bot {
             }
             _ => {}
         }
+        self.drain_voice_events().await;
         self.cooldowns.sweep();
+    }
+
+    /// Forwards queued voice events to hooks (`voiceReady`, `voiceError`, ...).
+    async fn drain_voice_events(&mut self) {
+        if self.hooks.is_none() {
+            while self.voice_rx.try_recv().is_ok() {}
+            return;
+        }
+        while let Ok(ev) = self.voice_rx.try_recv() {
+            if let Some(h) = &self.hooks {
+                h.dispatch(HookEvent::Voice(&ev)).await;
+            }
+        }
     }
 
     async fn handle_message(&mut self, message: Message) {
@@ -616,6 +694,8 @@ impl Bot {
             channel,
             member,
             bot_member,
+            voice: self.voice.clone(),
+            voice_states: self.voice_states.clone(),
         };
         for mw in &self.middleware {
             if let crate::middleware::Flow::Stop(reply) = mw.before(&cmd_name, &ctx).await {

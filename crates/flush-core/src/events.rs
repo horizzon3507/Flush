@@ -46,6 +46,10 @@ pub struct GuildReady {
     pub id: Snowflake,
     #[serde(default, deserialize_with = "crate::wire::null_bool")]
     pub unavailable: bool,
+    /// Voice state snapshot when READY carries it (empty for the usual
+    /// `{id, unavailable}` bot subset).
+    #[serde(default, deserialize_with = "crate::wire::null_vec")]
+    pub voice_states: Vec<crate::voice::VoiceState>,
 }
 
 /// Typed events Flush decodes. See [`DISPATCH_EVENTS`] for every wire name.

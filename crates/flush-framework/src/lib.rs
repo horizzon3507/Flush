@@ -28,6 +28,7 @@ pub mod sharding;
 pub mod sqlite;
 pub mod store_lock;
 pub mod variables;
+pub mod voice;
 
 pub use args::{parse_bool, parse_channel, parse_duration, parse_role, parse_user, ArgError, Args};
 pub use cases::{CaseStore, CaseType, ModCase};
@@ -61,4 +62,9 @@ pub use variables::{
     StoredVariable, Ttl, VariableAccess, VariableEntry, VariableError, VariableKey,
     VariableOperation, VariablePage, VariableQuery, VariableQueryOptions, VariableScope,
     VariableService, VariableStore, VariableTransaction, DATA_TRANSACTION_MAX,
+};
+pub use voice::{
+    SelfVoiceState, Voice, VoiceConnEvent, VoiceConnCallback, VoiceConnection, VoiceDriver,
+    VoiceError, VoiceEvent, VoiceEventGuard, VoiceEventName, VoiceSource, VoiceStateInfo,
+    VoiceStateTracker, VOICE_ERROR_MESSAGE,
 };

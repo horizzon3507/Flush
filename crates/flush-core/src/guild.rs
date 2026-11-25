@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::permissions::wire as perm_wire;
 use crate::snowflake::Snowflake;
@@ -67,26 +67,52 @@ impl MemberUser {
 }
 
 /// Guild snapshot: the Gateway nests metadata under `properties` or sends it flat.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum GuildSnapshot {
-    Nested {
-        id: Snowflake,
-        properties: GuildFlat,
-        #[serde(default, deserialize_with = "null_vec")]
-        roles: Vec<Role>,
-        #[serde(default, deserialize_with = "null_vec")]
-        channels: Vec<crate::channel::Channel>,
-        #[serde(default, deserialize_with = "null_vec")]
-        members: Vec<MemberUser>,
-        #[serde(default)]
-        member_count: Option<u64>,
-        #[serde(default)]
-        online_count: Option<u64>,
-        #[serde(default)]
-        unavailable: Option<bool>,
-    },
+    Nested(GuildNested),
     Flat(GuildFlat),
+}
+
+impl<'de> Deserialize<'de> for GuildSnapshot {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // `properties` means the payload is nested. A malformed nested
+        // section must fail outright instead of degrading to `Flat`, which
+        // would silently drop the metadata inside `properties`.
+        let value = serde_json::Value::deserialize(d)?;
+        if value.get("properties").is_some() {
+            GuildNested::deserialize(value)
+                .map(Self::Nested)
+                .map_err(serde::de::Error::custom)
+        } else {
+            GuildFlat::deserialize(value)
+                .map(Self::Flat)
+                .map_err(serde::de::Error::custom)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuildNested {
+    pub id: Snowflake,
+    pub properties: GuildFlat,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub roles: Vec<Role>,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub channels: Vec<crate::channel::Channel>,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub members: Vec<MemberUser>,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub voice_states: Vec<crate::voice::VoiceState>,
+    #[serde(default)]
+    pub member_count: Option<u64>,
+    #[serde(default)]
+    pub online_count: Option<u64>,
+    #[serde(default)]
+    pub unavailable: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +126,8 @@ pub struct GuildFlat {
     pub owner_id: Option<Snowflake>,
     #[serde(default, deserialize_with = "null_vec")]
     pub roles: Vec<Role>,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub voice_states: Vec<crate::voice::VoiceState>,
     #[serde(default)]
     pub member_count: Option<u64>,
     #[serde(default)]
@@ -120,6 +148,10 @@ pub struct Guild {
     pub owner_id: Snowflake,
     #[serde(default, deserialize_with = "null_vec")]
     pub roles: Vec<Role>,
+    /// Voice states carried by `GUILD_CREATE` (the SDK's `voiceStatesSync`
+    /// source). Empty when the gateway does not send them.
+    #[serde(default, deserialize_with = "null_vec")]
+    pub voice_states: Vec<crate::voice::VoiceState>,
     #[serde(default)]
     pub member_count: Option<u64>,
     #[serde(default)]
@@ -131,15 +163,16 @@ pub struct Guild {
 impl From<GuildSnapshot> for Guild {
     fn from(s: GuildSnapshot) -> Self {
         match s {
-            GuildSnapshot::Nested {
+            GuildSnapshot::Nested(GuildNested {
                 id,
                 properties,
                 roles,
                 member_count,
                 online_count,
                 unavailable,
+                voice_states,
                 ..
-            } => Self {
+            }) => Self {
                 id,
                 name: properties.name,
                 icon: properties.icon,
@@ -148,6 +181,11 @@ impl From<GuildSnapshot> for Guild {
                     properties.roles
                 } else {
                     roles
+                },
+                voice_states: if voice_states.is_empty() {
+                    properties.voice_states
+                } else {
+                    voice_states
                 },
                 member_count: member_count.or(properties.member_count),
                 online_count: online_count.or(properties.online_count),
@@ -158,6 +196,7 @@ impl From<GuildSnapshot> for Guild {
                 name: f.name,
                 icon: f.icon,
                 owner_id: f.owner_id.unwrap_or_default(),
+                voice_states: f.voice_states,
                 roles: f.roles,
                 member_count: f.member_count,
                 online_count: f.online_count,
