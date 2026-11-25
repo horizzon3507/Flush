@@ -436,10 +436,22 @@ impl SqliteStore {
     /// Copies `guilds.json` (the [`crate::GuildStore`] file) into this store
     /// in one transaction and returns how many guilds were written. Existing
     /// rows for the same guilds are replaced; a missing file imports nothing.
+    /// A case store file is refused: its entries would read as default
+    /// settings and reset those guilds.
     pub fn import_guilds_json(&self, path: &Path) -> Result<usize, StoreError> {
-        let Some(guilds) = read_json::<HashMap<String, GuildConfig>>(path)? else {
+        let Some(raw) = read_json::<HashMap<String, serde_json::Value>>(path)? else {
             return Ok(0);
         };
+        refuse_fields(
+            &raw,
+            CASE_FIELDS,
+            path,
+            "moderation cases",
+            "guild settings",
+        )?;
+        let guilds: HashMap<String, GuildConfig> =
+            serde_json::from_value(serde_json::Value::Object(raw.into_iter().collect()))
+                .map_err(|_| StoreError::Corrupt)?;
         self.write(|conn| {
             for (guild_id, config) in &guilds {
                 write_guild(conn, guild_id, config)?;
@@ -459,9 +471,19 @@ impl SqliteStore {
             #[serde(default)]
             next_id: u64,
         }
-        let Some(guilds) = read_json::<HashMap<String, Guild>>(path)? else {
+        let Some(raw) = read_json::<HashMap<String, serde_json::Value>>(path)? else {
             return Ok(0);
         };
+        refuse_fields(
+            &raw,
+            GUILD_FIELDS,
+            path,
+            "guild settings",
+            "moderation cases",
+        )?;
+        let guilds: HashMap<String, Guild> =
+            serde_json::from_value(serde_json::Value::Object(raw.into_iter().collect()))
+                .map_err(|_| StoreError::Corrupt)?;
         self.write(|conn| {
             let mut written = 0;
             for (guild_id, guild) in &guilds {
@@ -479,6 +501,32 @@ impl SqliteStore {
             Ok(written)
         })
     }
+}
+
+const CASE_FIELDS: &[&str] = &["cases", "next_id"];
+const GUILD_FIELDS: &[&str] = &["prefix", "mod_log_channel_id", "bot_color", "automod"];
+
+/// Both JSON stores map a guild id to an object whose fields all have
+/// defaults, so each file parses as the other kind. The fields tell them
+/// apart.
+fn refuse_fields(
+    guilds: &HashMap<String, serde_json::Value>,
+    fields: &[&str],
+    path: &Path,
+    found: &str,
+    wanted: &str,
+) -> Result<(), StoreError> {
+    let other_kind = guilds
+        .values()
+        .filter_map(serde_json::Value::as_object)
+        .any(|entry| fields.iter().any(|field| entry.contains_key(*field)));
+    if other_kind {
+        return Err(StoreError::Import(format!(
+            "{} holds {found}, not {wanted}",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, StoreError> {
