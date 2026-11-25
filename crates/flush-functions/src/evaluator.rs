@@ -1,6 +1,7 @@
 //! `Evaluator`: walks a parsed `Program` and invokes builtins under the
 //! configured limits (mirrors yuzuha's `Evaluator`).
 
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -96,7 +97,8 @@ impl Evaluator {
     }
 
     fn count_output(&self, text: &str) -> Result<(), ScriptFailure> {
-        let next = self.output.fetch_add(text.len(), Ordering::Relaxed) + text.len();
+        let len = text.chars().count();
+        let next = self.output.fetch_add(len, Ordering::Relaxed) + len;
         if next > self.limits.output {
             return Err(
                 FnError::new(codes::OUTPUT_LIMIT, "Exceeded the maximum output size.").into(),
@@ -114,6 +116,9 @@ impl Evaluator {
     ) -> CallResult {
         match node {
             Node::Text(text) => {
+                if ctx.aborted.load(Ordering::Relaxed) {
+                    return Err(FnError::new(codes::EXECUTION_ABORTED, "Execution aborted.").into());
+                }
                 self.count_output(&text.value)?;
                 Ok(text.value.clone())
             }
@@ -137,7 +142,6 @@ impl Evaluator {
         let mut out = String::new();
         for node in nodes {
             let part = Box::pin(self.evaluate(ctx, node, depth)).await?;
-            self.count_output(&part)?;
             out.push_str(&part);
         }
         *self.last_output.lock().unwrap() = out.clone();
@@ -185,7 +189,7 @@ impl Evaluator {
     /// else becomes FUNCTION_ERROR.
     pub async fn wrap<F>(&self, body: F) -> CallResult
     where
-        F: std::future::Future<Output = CallResult>,
+        F: Future<Output = CallResult>,
     {
         match body.await {
             Err(failure) if !crate::errors::is_uncatchable(&failure) => Err(ScriptFailure::Fn(
