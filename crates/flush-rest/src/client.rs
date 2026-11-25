@@ -154,11 +154,16 @@ pub struct RolePatch {
 pub struct ChannelCreate {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<u8>,
+    pub kind: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_per_user: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<Snowflake>,
+    /// `GuildLink` target URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
