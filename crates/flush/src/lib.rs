@@ -12,6 +12,7 @@
 pub use flush_core as core;
 pub use flush_framework as framework;
 pub use flush_gateway as gateway;
+pub use flush_music as music;
 pub use flush_rest as rest;
 
 #[cfg(feature = "sqlite")]

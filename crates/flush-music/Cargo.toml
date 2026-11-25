@@ -1,0 +1,18 @@
+[package]
+name = "flush-music"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Music and Lavalink support for Flush bots (Lavalink node, player, manager)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-std.workspace = true
+futures.workspace = true
+log.workspace = true
+async-tungstenite.workspace = true
+surf.workspace = true
+url.workspace = true
