@@ -22,6 +22,18 @@ async fn opt_arg(c: &crate::call::ScriptCall<'_>, i: usize) -> Res<Option<String
     Ok(opt(c.arg(i).await?))
 }
 
+async fn thread_member_args(
+    c: &crate::call::ScriptCall<'_>,
+) -> Res<(flush_core::Snowflake, flush_core::Snowflake)> {
+    let raw = c.arg(0).await?;
+    if raw.trim().is_empty() {
+        return Err(err("THREAD_ID", "The thread ID is required."));
+    }
+    let thread = channel_id(&raw)?;
+    let user = user_id(&c.arg(1).await?)?;
+    Ok((thread, user))
+}
+
 fn thread_name(raw: &str) -> Res<String> {
     let name = raw.trim();
     if name.is_empty() || name.len() > 100 {
@@ -407,6 +419,38 @@ pub fn register(d: &mut Definitions) {
                         .set_thread_state(thread, None, Some(locked), None),
                 )
                 .await?;
+                Ok(Value::Null)
+            })
+        },
+    );
+
+    d.add(
+        "addThreadMember",
+        "threads",
+        2,
+        2,
+        "[thread;usuário]",
+        "Adds a member to the thread.",
+        |c| {
+            Box::pin(async move {
+                let (thread, user) = thread_member_args(&c).await?;
+                rest(c, c.ctx.rest.add_thread_member(thread, user)).await?;
+                Ok(Value::Null)
+            })
+        },
+    );
+
+    d.add(
+        "removeThreadMember",
+        "threads",
+        2,
+        2,
+        "[thread;usuário]",
+        "Removes a member from the thread.",
+        |c| {
+            Box::pin(async move {
+                let (thread, user) = thread_member_args(&c).await?;
+                rest(c, c.ctx.rest.remove_thread_member(thread, user)).await?;
                 Ok(Value::Null)
             })
         },
