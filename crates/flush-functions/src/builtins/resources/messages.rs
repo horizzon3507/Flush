@@ -96,10 +96,13 @@ pub fn register(d: &mut Definitions) {
             Box::pin(async move {
                 let channel = snowflake(&c.arg(0).await?)?;
                 let message = snowflake(&c.arg(1).await?)?;
-                let send = payload(c, &arg_value(c, 2).await?).await?;
+                let value = arg_value(c, 2).await?;
+                let has_embeds = matches!(&value, Value::Object(o) if o.contains_key("embeds"))
+                    || matches!(&value, Value::Array(_));
+                let send = payload(c, &value).await?;
                 let body = EditMessageBody {
                     content: send.content,
-                    embeds: Some(send.embeds),
+                    embeds: has_embeds.then_some(send.embeds),
                 };
                 let rest = c.ctx.rest.clone();
                 c.wait(async move {

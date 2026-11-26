@@ -84,7 +84,7 @@ pub fn http_url(value: &str, code: &'static str) -> FnResult<String> {
 
 fn iso_timestamp(value: &str) -> FnResult<String> {
     let re = regex::Regex::new(
-        r"(?i)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$",
+        r"(?i)^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]{1,3})?)?(?:Z|[+-][0-9]{2}:[0-9]{2})$",
     )
     .expect("regex");
     let ok = re.is_match(value) && valid_date(value);
