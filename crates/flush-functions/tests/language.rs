@@ -143,6 +143,54 @@ async fn vars_and_state() {
 }
 
 #[async_std::test]
+async fn typed_args_and_objects() {
+    // `jsonValues`/`jsonEntries` were swapped (review finding).
+    assert_eq!(run("$jsonValues[$object[a;1;b;2]]").await, "[1,2]");
+    assert_eq!(run("$jsonEntries[$object[a;1]]").await, "[[\"a\",1]]");
+    assert_eq!(
+        run("$jsonEntries[$jsonDecode[[10,20]]]").await,
+        "[[\"0\",10],[\"1\",20]]"
+    );
+    // Typed args: a single-$-call argument keeps its JSON type (null
+    // survives as `null`, not `""`).
+    assert_eq!(run("$jsonEncode[$jsonDecode[null]]").await, "null");
+    assert_eq!(
+        run("$arrayMap[$jsonDecode[[null,1,\"x\"]];$loopValue]").await,
+        "[null,1,\"x\"]"
+    );
+    // `parseDate` validates fields instead of panicking or normalizing.
+    for bad in [
+        "2024-02-30",
+        "2024-01-01T",
+        "2024-01-01T99:99Z",
+        "2024-13-01",
+    ] {
+        let err = runtime()
+            .run(&ctx().await, &format!("$parseDate[{bad}]"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "DATE", "input {bad}");
+    }
+    assert_eq!(
+        run("$parseDate[2024-02-29T12:30:00Z]").await,
+        "1709209800000"
+    );
+    // `deep_equal`: distinct large integers must not collapse via f64.
+    let ctx = ctx_with(true).await;
+    let out = runtime()
+        .run(
+            &ctx,
+            "$pushVar[big;$jsonDecode[9007199254740992]]$pushVar[big;$jsonDecode[9007199254740993]]$pullVar[big;9007199254740992]",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        "[9007199254740992][9007199254740992,9007199254740993][9007199254740993]"
+    );
+}
+
+#[async_std::test]
 async fn arrays() {
     assert_eq!(run("$arrayJoin[$array[1;2;3];,]").await, "1,2,3");
     assert_eq!(run("$arrayLength[$array[1;2;3]]").await, "3");

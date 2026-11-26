@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 
 use serde_json::Value;
 
-use super::common::{arg_value, integer, json_clone, require_array};
+use super::common::{integer, json_clone, require_array};
 use crate::errors::FnError;
 use crate::types::Definitions;
 use crate::values::{deep_equal, text, typed_scalar};
@@ -31,7 +31,7 @@ pub fn register(d: &mut Definitions) {
             Box::pin(async move {
                 let mut result = Vec::new();
                 for i in 0..c.arg_count() {
-                    result.push(typed_scalar(&json_clone(&arg_value(&c.arg(i).await?))));
+                    result.push(typed_scalar(&json_clone(&c.value_arg(i).await?)));
                 }
                 Ok(Value::Array(result))
             })
@@ -47,9 +47,9 @@ pub fn register(d: &mut Definitions) {
         "Returns a new array with the values appended.",
         |c| {
             Box::pin(async move {
-                let mut result = require_array(arg_value(&c.arg(0).await?))?;
+                let mut result = require_array(c.value_arg(0).await?)?;
                 for i in 1..c.arg_count() {
-                    result.push(typed_scalar(&json_clone(&arg_value(&c.arg(i).await?))));
+                    result.push(typed_scalar(&json_clone(&c.value_arg(i).await?)));
                 }
                 Ok(Value::Array(result))
             })
@@ -65,11 +65,11 @@ pub fn register(d: &mut Definitions) {
         "Gets an item by index; returns the default when absent.",
         |c| {
             Box::pin(async move {
-                let base = require_array(arg_value(&c.arg(0).await?))?;
+                let base = require_array(c.value_arg(0).await?)?;
                 let index = integer(&c.arg(1).await?, "Index")?;
                 if index < 0 || index as usize >= base.len() {
                     return Ok(match c.arg_count() > 2 {
-                        true => arg_value(&c.arg(2).await?),
+                        true => c.value_arg(2).await?,
                         false => Value::Null,
                     });
                 }
@@ -88,7 +88,7 @@ pub fn register(d: &mut Definitions) {
         |c| {
             Box::pin(async move {
                 Ok(Value::from(
-                    require_array(arg_value(&c.arg(0).await?))?.len() as u64,
+                    require_array(c.value_arg(0).await?)?.len() as u64
                 ))
             })
         },
@@ -103,7 +103,7 @@ pub fn register(d: &mut Definitions) {
         "Slice of the array; end exclusive.",
         |c| {
             Box::pin(async move {
-                let base = require_array(arg_value(&c.arg(0).await?))?;
+                let base = require_array(c.value_arg(0).await?)?;
                 let start = integer(&c.arg(1).await?, "Start")?;
                 let end = if c.arg_count() > 2 {
                     integer(&c.arg(2).await?, "End")?
@@ -130,8 +130,8 @@ pub fn register(d: &mut Definitions) {
         "Checks whether the array contains the value.",
         |c| {
             Box::pin(async move {
-                let base = require_array(arg_value(&c.arg(0).await?))?;
-                let target = typed_scalar(&json_clone(&arg_value(&c.arg(1).await?)));
+                let base = require_array(c.value_arg(0).await?)?;
+                let target = typed_scalar(&json_clone(&c.value_arg(1).await?));
                 Ok(Value::Bool(
                     base.iter().any(|item| deep_equal(item, &target)),
                 ))
@@ -148,8 +148,8 @@ pub fn register(d: &mut Definitions) {
         "Position of the first occurrence, or -1.",
         |c| {
             Box::pin(async move {
-                let base = require_array(arg_value(&c.arg(0).await?))?;
-                let target = typed_scalar(&json_clone(&arg_value(&c.arg(1).await?)));
+                let base = require_array(c.value_arg(0).await?)?;
+                let target = typed_scalar(&json_clone(&c.value_arg(1).await?));
                 let index = base.iter().position(|item| deep_equal(item, &target));
                 Ok(match index {
                     Some(i) => Value::from(i as u64),
@@ -168,7 +168,7 @@ pub fn register(d: &mut Definitions) {
         "Joins items converted to text.",
         |c| {
             Box::pin(async move {
-                let base = require_array(arg_value(&c.arg(0).await?))?;
+                let base = require_array(c.value_arg(0).await?)?;
                 let separator = c.arg(1).await?;
                 Ok(Value::String(
                     base.iter().map(text).collect::<Vec<_>>().join(&separator),
@@ -186,7 +186,7 @@ pub fn register(d: &mut Definitions) {
         "Sorts a copy of the array; direction asc or desc.",
         |c| {
             Box::pin(async move {
-                let base = require_array(arg_value(&c.arg(0).await?))?;
+                let base = require_array(c.value_arg(0).await?)?;
                 let direction = if c.arg_count() > 1 {
                     c.arg(1).await?.trim().to_lowercase()
                 } else {
@@ -214,7 +214,7 @@ pub fn register(d: &mut Definitions) {
         "Returns a reversed copy of the array.",
         |c| {
             Box::pin(async move {
-                let mut result = require_array(arg_value(&c.arg(0).await?))?;
+                let mut result = require_array(c.value_arg(0).await?)?;
                 result.reverse();
                 Ok(Value::Array(result))
             })
@@ -230,7 +230,7 @@ pub fn register(d: &mut Definitions) {
         "Removes duplicates, keeping the first occurrence.",
         |c| {
             Box::pin(async move {
-                let base = require_array(arg_value(&c.arg(0).await?))?;
+                let base = require_array(c.value_arg(0).await?)?;
                 let mut result: Vec<Value> = Vec::new();
                 for item in base {
                     if result.iter().any(|known| deep_equal(known, &item)) {
@@ -266,8 +266,8 @@ pub fn register(d: &mut Definitions) {
             format!("{description} Maximum of 1000 items combined.").leak(),
             move |c| {
                 Box::pin(async move {
-                    let left = require_array(arg_value(&c.arg(0).await?))?;
-                    let right = require_array(arg_value(&c.arg(1).await?))?;
+                    let left = require_array(c.value_arg(0).await?)?;
+                    let right = require_array(c.value_arg(1).await?)?;
                     if left.len() + right.len() > 1000 {
                         return Err(FnError::new(
                             "ARRAY_SET",
@@ -344,7 +344,7 @@ pub fn register(d: &mut Definitions) {
         "1-based page of the array.",
         |c| {
             Box::pin(async move {
-                let base = require_array(arg_value(&c.arg(0).await?))?;
+                let base = require_array(c.value_arg(0).await?)?;
                 let page = integer(&c.arg(1).await?, "Page")?;
                 let size = integer(&c.arg(2).await?, "Size")?;
                 if page < 1 {
@@ -377,8 +377,8 @@ pub fn register(d: &mut Definitions) {
             Box::pin(async move {
                 let mut result: Vec<Value> = Vec::new();
                 for i in 0..c.arg_count() {
-                    result.extend(require_array(arg_value(&c.arg(i).await?))?);
-                    c.count_output(&text(&Value::Array(result.clone())))?;
+                    result.extend(require_array(c.value_arg(i).await?)?);
+                    c.enforce_output_limit(&text(&Value::Array(result.clone())))?;
                 }
                 Ok(Value::Array(result))
             })
@@ -394,7 +394,7 @@ pub fn register(d: &mut Definitions) {
         "Flattens arrays; integer depth between 0 and 64.",
         |c| {
             Box::pin(async move {
-                let items = require_array(arg_value(&c.arg(0).await?))?;
+                let items = require_array(c.value_arg(0).await?)?;
                 let depth = if c.arg_count() > 1 {
                     integer(&c.arg(1).await?, "Depth")?
                 } else {
@@ -429,7 +429,7 @@ pub fn register(d: &mut Definitions) {
         "Splits the array into groups of the given size.",
         |c| {
             Box::pin(async move {
-                let items = require_array(arg_value(&c.arg(0).await?))?;
+                let items = require_array(c.value_arg(0).await?)?;
                 let size = integer(&c.arg(1).await?, "Size")?;
                 if size < 1 {
                     return Err(FnError::new("ARRAY_CHUNK", "Size must be at least 1.").into());

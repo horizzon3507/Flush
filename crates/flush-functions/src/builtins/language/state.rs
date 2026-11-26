@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use flush_framework::{VariableScope, VariableService, VariableStore};
 
-use super::common::{arg_value, integer, json_clone};
+use super::common::{integer, json_clone};
 use super::objects::{parse_path, set_json_path};
 use crate::errors::{FnError, GuardError, GuardReason, ScriptFailure};
 use crate::types::Definitions;
@@ -130,7 +130,7 @@ fn register_scope(d: &mut Definitions, suffix: &'static str, scope: VariableScop
                             FnError::new("INCREMENT", "Result is not a finite number.").into()
                         );
                     }
-                    c.count_output(&text(&super::common::number(next)))?;
+                    c.enforce_output_limit(&text(&super::common::number(next)))?;
                     Ok(super::common::number(next))
                 })
             })
@@ -147,7 +147,7 @@ fn register_scope(d: &mut Definitions, suffix: &'static str, scope: VariableScop
         move |c| {
             Box::pin(async move {
                 let name = c.arg(0).await?;
-                let item = typed_scalar(&json_clone(&arg_value(&c.arg(1).await?)));
+                let item = typed_scalar(&json_clone(&c.value_arg(1).await?));
                 let service = variables(c.ctx)?;
                 scoped_update(&service, scope, &name, |current| {
                     let next = match current {
@@ -162,7 +162,7 @@ fn register_scope(d: &mut Definitions, suffix: &'static str, scope: VariableScop
                             )
                         }
                     };
-                    c.count_output(&text(&next))?;
+                    c.enforce_output_limit(&text(&next))?;
                     Ok(next)
                 })
             })
@@ -179,7 +179,7 @@ fn register_scope(d: &mut Definitions, suffix: &'static str, scope: VariableScop
         move |c| {
             Box::pin(async move {
                 let name = c.arg(0).await?;
-                let target = typed_scalar(&json_clone(&arg_value(&c.arg(1).await?)));
+                let target = typed_scalar(&json_clone(&c.value_arg(1).await?));
                 let service = variables(c.ctx)?;
                 scoped_update(&service, scope, &name, |current| {
                     let next = match current {
@@ -196,7 +196,7 @@ fn register_scope(d: &mut Definitions, suffix: &'static str, scope: VariableScop
                             )
                         }
                     };
-                    c.count_output(&text(&next))?;
+                    c.enforce_output_limit(&text(&next))?;
                     Ok(next)
                 })
             })
@@ -214,11 +214,11 @@ fn register_scope(d: &mut Definitions, suffix: &'static str, scope: VariableScop
             Box::pin(async move {
                 let name = c.arg(0).await?;
                 let segments = parse_path(&c.arg(1).await?)?;
-                let fresh = typed_scalar(&json_clone(&arg_value(&c.arg(2).await?)));
+                let fresh = typed_scalar(&json_clone(&c.value_arg(2).await?));
                 let service = variables(c.ctx)?;
                 scoped_update(&service, scope, &name, |current| {
                     let next = set_json_path(&current, &segments, &fresh)?;
-                    c.count_output(&text(&next))?;
+                    c.enforce_output_limit(&text(&next))?;
                     Ok(next)
                 })
             })

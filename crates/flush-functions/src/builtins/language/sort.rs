@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::common::{arg_value, require_array};
+use super::common::require_array;
 use super::loops::with_loop_state;
 use super::state::LOOP_MAX;
 use crate::errors::{FnError, ScriptFailure};
@@ -44,7 +44,7 @@ pub fn register(d: &mut Definitions) {
         "Stable sort with a numeric negative/zero/positive expression; maximum 1000 items and 10000 comparisons.",
         |c| {
             Box::pin(async move {
-                let input = require_array(arg_value(&c.arg(0).await?))?;
+                let input = require_array(c.value_arg(0).await?)?;
                 if input.len() > LOOP_MAX {
                     return Err(FnError::new(
                         "EXECUTION_LIMIT",
@@ -118,7 +118,7 @@ pub fn register(d: &mut Definitions) {
                         }
                     }
                     let values = inner?;
-                    c.count_output(&text(&Value::Array(values.clone())))?;
+                    c.enforce_output_limit(&text(&Value::Array(values.clone())))?;
                     Ok(Value::Array(values))
                 })
                 .await;

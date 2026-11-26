@@ -157,6 +157,24 @@ impl Evaluator {
         Ok(out)
     }
 
+    /// `evaluate_typed(node[])`: like `evaluate_many`, but when the
+    /// argument is a single `$` call it also returns the builtin's value
+    /// before text coercion (yuzuha `c.arg` hands back typed values).
+    pub async fn evaluate_typed(
+        &self,
+        ctx: &Arc<ScriptContext>,
+        nodes: &[Node],
+        depth: usize,
+    ) -> Result<(String, Option<Value>), ScriptFailure> {
+        if nodes.len() == 1 {
+            if let Node::Call(call) = &nodes[0] {
+                let value = self.invoke_value(ctx, call, depth).await?;
+                return Ok((values::text(&value), Some(value)));
+            }
+        }
+        Ok((self.evaluate_many(ctx, nodes, depth).await?, None))
+    }
+
     /// `invoke(call)`: resolve, run the builtin, coerce its output.
     pub async fn invoke(
         &self,
@@ -164,6 +182,18 @@ impl Evaluator {
         node: &CallNode,
         depth: usize,
     ) -> CallResult {
+        let value = self.invoke_value(ctx, node, depth).await?;
+        Ok(values::text(&value))
+    }
+
+    /// `invoke` returning the builtin's typed value; the text form is
+    /// still charged against the output limit.
+    pub async fn invoke_value(
+        &self,
+        ctx: &Arc<ScriptContext>,
+        node: &CallNode,
+        depth: usize,
+    ) -> Result<Value, ScriptFailure> {
         if ctx.aborted.load(Ordering::Relaxed) {
             return Err(FnError::new(codes::EXECUTION_ABORTED, "Execution aborted.").into());
         }

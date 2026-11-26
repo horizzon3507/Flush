@@ -67,7 +67,7 @@ async fn run_body(c: &ScriptCall<'_>, frame: u64) -> Result<BodyRun, ScriptFailu
         match c.fresh(i).await {
             Ok(part) => {
                 result.push_str(&part);
-                c.count_output(&result)?;
+                c.enforce_output_limit(&result)?;
             }
             Err(ScriptFailure::Loop(control)) if control.frame == frame => {
                 return Ok(BodyRun {
@@ -165,7 +165,7 @@ pub fn register(d: &mut Definitions) {
                         c.ctx.set_loop_frame(Some(frame));
                         let part = run_body(c, frame).await?;
                         result.push_str(&part.value);
-                        c.count_output(&result)?;
+                        c.enforce_output_limit(&result)?;
                         if part.stop {
                             return Ok(result);
                         }
@@ -207,7 +207,7 @@ pub fn register(d: &mut Definitions) {
                         c.ctx.var_delete(LOOP_VALUE_KEY);
                         let part = run_body(c, frame).await?;
                         result.push_str(&part.value);
-                        c.count_output(&result)?;
+                        c.enforce_output_limit(&result)?;
                         if part.stop {
                             break;
                         }
@@ -229,7 +229,7 @@ pub fn register(d: &mut Definitions) {
         "Concatenates the body for each item, with $loopValue and $loopIndex.",
         |c| {
             Box::pin(async move {
-                let items = require_array(super::common::arg_value(&c.arg(0).await?))?;
+                let items = require_array(c.value_arg(0).await?)?;
                 if items.len() > LOOP_MAX {
                     return Err(FnError::new(
                         "FOREACH",
@@ -246,7 +246,7 @@ pub fn register(d: &mut Definitions) {
                         c.ctx.var_set(LOOP_VALUE_KEY, item.clone());
                         let part = run_body(c, frame).await?;
                         result.push_str(&part.value);
-                        c.count_output(&result)?;
+                        c.enforce_output_limit(&result)?;
                         if part.stop {
                             break;
                         }

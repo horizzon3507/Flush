@@ -16,6 +16,12 @@ pub fn text(value: &Value) -> String {
     }
 }
 
+/// `jsonClone` of an arg's text: JSON keeps its type, anything else is a
+/// plain string.
+pub fn arg_value(text: &str) -> Value {
+    serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string()))
+}
+
 /// `JSON.stringify` with JS number formatting: integral doubles print
 /// without a fraction (`1`, not `1.0`).
 pub fn js_stringify(value: &Value) -> String {

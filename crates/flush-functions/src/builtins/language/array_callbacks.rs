@@ -12,7 +12,7 @@ use crate::types::Definitions;
 use crate::values::{text, truthy};
 
 async fn items(c: &ScriptCall<'_>) -> Result<Vec<Value>, ScriptFailure> {
-    let value = require_array(arg_value(&c.arg(0).await?))?;
+    let value = require_array(c.value_arg(0).await?)?;
     if value.len() > LOOP_MAX {
         return Err(FnError::new(
             "EXECUTION_LIMIT",
@@ -66,7 +66,8 @@ pub fn register(d: &mut Definitions) {
                         let mut result: Vec<Value> = Vec::new();
                         for index in 0..values.len() {
                             iteration(c, &values, index);
-                            let value = arg_value(&c.fresh(1).await?);
+                            let (rendered, typed) = c.fresh_typed(1).await?;
+                            let value = typed.unwrap_or_else(|| arg_value(&rendered));
                             let matches = truthy(&value);
                             if name == "arraySome" && matches {
                                 return Ok(Value::Bool(true));
@@ -83,7 +84,7 @@ pub fn register(d: &mut Definitions) {
                             if name == "arrayFilter" && matches {
                                 result.push(values[index].clone());
                             }
-                            c.count_output(&text(&Value::Array(result.clone())))?;
+                            c.enforce_output_limit(&text(&Value::Array(result.clone())))?;
                         }
                         if name == "arraySome" {
                             return Ok(Value::Bool(false));
@@ -112,13 +113,14 @@ pub fn register(d: &mut Definitions) {
         |c| {
             Box::pin(async move {
                 let values = items(c).await?;
-                let mut accumulator = arg_value(&c.arg(1).await?);
+                let mut accumulator = c.value_arg(1).await?;
                 with_loop_state(c.ctx, async move {
                     for index in 0..values.len() {
                         iteration(c, &values, index);
                         c.ctx.var_set(LOOP_ACCUMULATOR_KEY, accumulator.clone());
-                        accumulator = arg_value(&c.fresh(2).await?);
-                        c.count_output(&text(&accumulator))?;
+                        let (rendered, typed) = c.fresh_typed(2).await?;
+                        accumulator = typed.unwrap_or_else(|| arg_value(&rendered));
+                        c.enforce_output_limit(&text(&accumulator))?;
                     }
                     Ok(accumulator)
                 })
@@ -149,7 +151,8 @@ pub fn register(d: &mut Definitions) {
                     let mut keyed: Vec<(Value, Value)> = Vec::new();
                     for index in 0..values.len() {
                         iteration(c, &values, index);
-                        let key = arg_value(&c.fresh(1).await?);
+                        let (rendered, typed) = c.fresh_typed(1).await?;
+                        let key = typed.unwrap_or_else(|| arg_value(&rendered));
                         let valid = match &key {
                             Value::String(_) => true,
                             Value::Number(n) => n.as_f64().is_some_and(f64::is_finite),

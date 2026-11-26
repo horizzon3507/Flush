@@ -3,7 +3,6 @@
 
 use serde_json::{Map, Value};
 
-use super::common::arg_value;
 use crate::errors::{FnError, ScriptFailure};
 use crate::types::Definitions;
 use crate::values::{text, to_json, typed_scalar};
@@ -214,23 +213,21 @@ pub fn register(d: &mut Definitions) {
             "Lists values or key-value pairs of an object or array.",
             move |c| {
                 Box::pin(async move {
-                    let value = arg_value(&c.arg(0).await?);
+                    let value = c.value_arg(0).await?;
                     let entries: Vec<Value> = match value {
                         Value::Object(map) => {
                             if values_fn {
-                                map.values().cloned().collect()
-                            } else {
                                 map.into_iter()
                                     .map(|(key, value)| {
                                         Value::Array(vec![Value::String(key), value])
                                     })
                                     .collect()
+                            } else {
+                                map.values().cloned().collect()
                             }
                         }
                         Value::Array(items) => {
                             if values_fn {
-                                items
-                            } else {
                                 items
                                     .into_iter()
                                     .enumerate()
@@ -238,6 +235,8 @@ pub fn register(d: &mut Definitions) {
                                         Value::Array(vec![Value::String(i.to_string()), value])
                                     })
                                     .collect()
+                            } else {
+                                items
                             }
                         }
                         _ => {
@@ -248,7 +247,7 @@ pub fn register(d: &mut Definitions) {
                             .into())
                         }
                     };
-                    c.count_output(&text(&Value::Array(entries.clone())))?;
+                    c.enforce_output_limit(&text(&Value::Array(entries.clone())))?;
                     Ok(Value::Array(entries))
                 })
             },
@@ -277,13 +276,11 @@ pub fn register(d: &mut Definitions) {
                     let key = c.arg(i).await?;
                     result.insert(
                         key,
-                        typed_scalar(
-                            &to_json(&arg_value(&c.arg(i + 1).await?)).unwrap_or(Value::Null),
-                        ),
+                        typed_scalar(&to_json(&c.value_arg(i + 1).await?).unwrap_or(Value::Null)),
                     );
                     i += 2;
                 }
-                c.count_output(&text(&Value::Object(result.clone())))?;
+                c.enforce_output_limit(&text(&Value::Object(result.clone())))?;
                 Ok(Value::Object(result))
             })
         },
@@ -298,7 +295,7 @@ pub fn register(d: &mut Definitions) {
         "Encodes a value as JSON text.",
         |c| {
             Box::pin(async move {
-                let value = arg_value(&c.arg(0).await?);
+                let value = c.value_arg(0).await?;
                 Ok(Value::String(crate::values::js_stringify(&value)))
             })
         },
@@ -316,7 +313,7 @@ pub fn register(d: &mut Definitions) {
                 let raw = c.arg(0).await?;
                 match serde_json::from_str::<Value>(&raw) {
                     Ok(value) => {
-                        c.count_output(&text(&value))?;
+                        c.enforce_output_limit(&text(&value))?;
                         Ok(value)
                     }
                     Err(_) => Err(FnError::new("JSON_DECODE", "Invalid JSON.").into()),
@@ -334,7 +331,7 @@ pub fn register(d: &mut Definitions) {
         "Reads a path with dots and indices, e.g. \"a.0.b\". Returns the default when absent.",
         |c| {
             Box::pin(async move {
-                let value = arg_value(&c.arg(0).await?);
+                let value = c.value_arg(0).await?;
                 let segments = parse_path(&c.arg(1).await?)?;
                 if segments.is_empty() {
                     return Ok(value);
@@ -342,7 +339,7 @@ pub fn register(d: &mut Definitions) {
                 match get_by_path(&value, &segments) {
                     Some(found) => Ok(found.clone()),
                     None => Ok(if c.arg_count() > 2 {
-                        arg_value(&c.arg(2).await?)
+                        c.value_arg(2).await?
                     } else {
                         Value::String(String::new())
                     }),
@@ -360,9 +357,9 @@ pub fn register(d: &mut Definitions) {
         "Returns a copy with the path changed, without mutating the original.",
         |c| {
             Box::pin(async move {
-                let base = arg_value(&c.arg(0).await?);
+                let base = c.value_arg(0).await?;
                 let segments = parse_path(&c.arg(1).await?)?;
-                let fresh = to_json(&arg_value(&c.arg(2).await?)).unwrap_or(Value::Null);
+                let fresh = to_json(&c.value_arg(2).await?).unwrap_or(Value::Null);
                 set_json_path(&base, &segments, &fresh)
             })
         },
@@ -377,7 +374,7 @@ pub fn register(d: &mut Definitions) {
         "Returns a copy without the path; removes an array index. An absent path changes nothing.",
         |c| {
             Box::pin(async move {
-                let base = arg_value(&c.arg(0).await?);
+                let base = c.value_arg(0).await?;
                 let segments = parse_path(&c.arg(1).await?)?;
                 Ok(delete_json_path(&base, &segments))
             })
@@ -393,9 +390,9 @@ pub fn register(d: &mut Definitions) {
         "Deep-merges objects without mutation; the last value wins and arrays are replaced.",
         |c| {
             Box::pin(async move {
-                let mut result = to_json(&arg_value(&c.arg(0).await?)).unwrap_or(Value::Null);
+                let mut result = to_json(&c.value_arg(0).await?).unwrap_or(Value::Null);
                 for i in 1..c.arg_count() {
-                    result = merge_json(&result, &arg_value(&c.arg(i).await?));
+                    result = merge_json(&result, &c.value_arg(i).await?);
                 }
                 Ok(result)
             })
@@ -411,7 +408,7 @@ pub fn register(d: &mut Definitions) {
         "Lists the keys of an object or the indices of an array.",
         |c| {
             Box::pin(async move {
-                let value = arg_value(&c.arg(0).await?);
+                let value = c.value_arg(0).await?;
                 let keys = match value {
                     Value::Object(map) => map.keys().cloned().map(Value::String).collect(),
                     Value::Array(items) => (0..items.len())
@@ -437,7 +434,7 @@ pub fn register(d: &mut Definitions) {
         "Checks an object's own property.",
         |c| {
             Box::pin(async move {
-                let value = arg_value(&c.arg(0).await?);
+                let value = c.value_arg(0).await?;
                 let key = c.arg(1).await?;
                 Ok(Value::Bool(match value {
                     Value::Object(map) => map.contains_key(&key),

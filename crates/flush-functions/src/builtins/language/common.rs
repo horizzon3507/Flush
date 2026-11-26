@@ -10,9 +10,7 @@ const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
 
 /// `jsonClone`: a script arg text back into a `Value` (objects/arrays keep
 /// their JSON type; anything that is not JSON stays a string).
-pub fn arg_value(text: &str) -> Value {
-    serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string()))
-}
+pub use crate::values::arg_value;
 
 /// `jsonClone` over a `Value` (non-finite numbers scrubbed), used where
 /// yuzuha clones arg results before storing them.

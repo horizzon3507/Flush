@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::language::common::{arg_value, finite_number, number};
+use super::language::common::{finite_number, number};
 use crate::errors::FnError;
 use crate::types::Definitions;
 use crate::values::truthy;
@@ -17,7 +17,7 @@ pub fn register(d: &mut Definitions) {
         "Gets an object's own property.",
         |c| {
             Box::pin(async move {
-                let value = arg_value(&c.arg(0).await?);
+                let value = c.value_arg(0).await?;
                 let key = c.arg(1).await?;
                 Ok(match value {
                     Value::Object(map) => map
@@ -55,7 +55,7 @@ pub fn register(d: &mut Definitions) {
         1,
         "[value]",
         "Inverts a condition.",
-        |c| Box::pin(async move { Ok(Value::Bool(!truthy(&arg_value(&c.arg(0).await?)))) }),
+        |c| Box::pin(async move { Ok(Value::Bool(!truthy(&c.value_arg(0).await?))) }),
     );
 
     for (name, description) in [
@@ -65,7 +65,7 @@ pub fn register(d: &mut Definitions) {
         d.add(name, "values", 2, 32, "[a;b;...]", description, move |c| {
             Box::pin(async move {
                 for i in 0..c.arg_count() {
-                    let value = truthy(&arg_value(&c.arg(i).await?));
+                    let value = truthy(&c.value_arg(i).await?);
                     if name == "and" && !value {
                         return Ok(Value::Bool(false));
                     }

@@ -4,6 +4,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use serde_json::Value;
+
 use crate::ast::CallNode;
 use crate::context::ScriptContext;
 use crate::errors::ScriptFailure;
@@ -70,6 +72,39 @@ impl<'a> ScriptCall<'a> {
         Box::pin(
             self.evaluator
                 .evaluate_many(self.ctx, &self.node.args[index], self.depth + 1),
+        )
+        .await
+    }
+
+    /// `value_arg(i)`: the argument's typed value. When the argument is a
+    /// single `$` call, the builtin's own `Value` comes back unchanged
+    /// (yuzuha `c.arg` returns typed values); otherwise the evaluated
+    /// text is parsed as JSON, falling back to a plain string.
+    pub async fn value_arg(&self, index: usize) -> Result<Value, ScriptFailure> {
+        if index >= self.node.args.len() {
+            return Ok(Value::String(String::new()));
+        }
+        let (text, typed) = Box::pin(self.evaluator.evaluate_typed(
+            self.ctx,
+            &self.node.args[index],
+            self.depth + 1,
+        ))
+        .await?;
+        Ok(typed.unwrap_or_else(|| crate::values::arg_value(&text)))
+    }
+
+    /// `fresh_typed(i)`: like `value_arg`, re-evaluating the argument and
+    /// also returning its rendered text.
+    pub async fn fresh_typed(
+        &self,
+        index: usize,
+    ) -> Result<(String, Option<Value>), ScriptFailure> {
+        if index >= self.node.args.len() {
+            return Ok((String::new(), None));
+        }
+        Box::pin(
+            self.evaluator
+                .evaluate_typed(self.ctx, &self.node.args[index], self.depth + 1),
         )
         .await
     }
