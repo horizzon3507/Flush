@@ -121,6 +121,21 @@ impl ScriptScheduler {
             Some(job) if job.guild_id == guild_id && job.author_id == author_id => job,
             _ => return Ok(false),
         };
+        const KNOWN: &[&str] = &[
+            "command",
+            "input",
+            "due",
+            "intervalMs",
+            "priority",
+            "paused",
+            "maxAttempts",
+            "retryDelayMs",
+            "retryBackoff",
+            "retryJitter",
+        ];
+        if let Some(key) = patch.keys().find(|k| !KNOWN.contains(&k.as_str())) {
+            return Err(format!("Unknown schedule option '{key}'."));
+        }
         for (key, value) in patch {
             match key.as_str() {
                 "command" => job.command = as_text(value),
@@ -141,9 +156,7 @@ impl ScriptScheduler {
                 "retryJitter" => {
                     job.retry_jitter = value.as_f64().unwrap_or(job.retry_jitter);
                 }
-                other => {
-                    return Err(format!("Unknown schedule option '{other}'."));
-                }
+                _ => unreachable!(),
             }
         }
         Ok(true)
