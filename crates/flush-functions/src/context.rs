@@ -51,6 +51,15 @@ pub struct ScriptContext {
     pub moderation_applied: AtomicBool,
     /// Name → emoji mapping configured on the bot.
     pub emoji: HashMap<String, String>,
+
+    /// Declarative argument values, for `$arg[name]` (empty by default).
+    pub args: HashMap<String, Value>,
+
+    /// Gateway latency in ms, for `$ping` (`None` → empty).
+    pub ping_ms: Option<u64>,
+
+    /// Help text of the invoked command, for `$help` (`None` → empty).
+    pub help: Option<String>,
     /// Owner user IDs (for `isOwner`).
     pub owners: Vec<Snowflake>,
     /// Dev guild IDs (for `isDevGuild` checks).

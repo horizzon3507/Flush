@@ -86,7 +86,14 @@ pub fn register(d: &mut Definitions) {
         0,
         "",
         "The bot's gateway latency in milliseconds.",
-        |_| Box::pin(async move { Ok(Value::Null) }),
+        |c| {
+            Box::pin(async move {
+                Ok(c.ctx
+                    .ping_ms
+                    .map(|ms| Value::String(ms.to_string()))
+                    .unwrap_or_else(|| Value::String(String::new())))
+            })
+        },
     );
 
     d.add(
@@ -118,7 +125,7 @@ pub fn register(d: &mut Definitions) {
         0,
         "",
         "The help text of the invoked command.",
-        |_| Box::pin(async move { Ok(Value::Null) }),
+        |c| Box::pin(async move { Ok(Value::String(c.ctx.help.clone().unwrap_or_default())) }),
     );
 
     d.add(
@@ -204,7 +211,16 @@ pub fn register(d: &mut Definitions) {
         1,
         "[nome]",
         "The value of a named command argument.",
-        |_| Box::pin(async move { Ok(Value::Null) }),
+        |c| {
+            Box::pin(async move {
+                let name = c.arg(0).await?;
+                Ok(c.ctx
+                    .args
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or(Value::String(String::new())))
+            })
+        },
     );
 
     d.add(
