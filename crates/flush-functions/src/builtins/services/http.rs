@@ -513,10 +513,11 @@ fn base64_decode(raw: &str) -> Option<Vec<u8>> {
         }
         let mut acc = 0u32;
         for &b in chunk {
-            acc = (acc << 6) | table(b).unwrap_or(0) as u32;
+            acc = (acc << 6) | if b == b'=' { 0 } else { table(b)? as u32 };
         }
-        // '=' counts as 0 bits above, so the first `3 - pad` bytes are right.
-        out.extend_from_slice(&acc.to_be_bytes()[..3 - pad]);
+        // '=' counts as 0 bits at the low end, so the first `3 - pad`
+        // bytes of the accumulator are the decoded output.
+        out.extend_from_slice(&acc.to_be_bytes()[1..4 - pad]);
     }
     Some(out)
 }
