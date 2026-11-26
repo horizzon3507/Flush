@@ -11,10 +11,6 @@ use crate::types::Definitions;
 
 use super::{arg_value, number_arg, permissions, required, snowflake, user_id};
 
-fn channel_json(ch: &flush_core::Channel) -> Value {
-    serde_json::to_value(ch).unwrap_or(Value::Null)
-}
-
 fn fail<T>(code: &'static str, message: impl Into<String>) -> FnResult<T> {
     Err(FnError::new(code, message).into())
 }
@@ -110,8 +106,10 @@ fn attachment(value: &Value) -> FnResult<Attachment> {
     }
     match file.get("url") {
         Some(Value::String(u))
-            if u.len() >= 8 && u[..8].eq_ignore_ascii_case("https://")
-                || u.len() >= 7 && u[..7].eq_ignore_ascii_case("http://") =>
+            if u.get(..8)
+                .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
+                || u.get(..7)
+                    .is_some_and(|p| p.eq_ignore_ascii_case("http://")) =>
         {
             Ok(Attachment {
                 name,
@@ -404,6 +402,7 @@ async fn send_files(
         );
     }
     let mut uploads = Vec::new();
+    let mut downloaded = 0usize;
     for file in files {
         let name = if file.spoiler && !file.name.starts_with("SPOILER_") {
             format!("SPOILER_{}", file.name)
@@ -421,15 +420,43 @@ async fn send_files(
                             .map_err(|e| FnError::new("ATTACHMENT_URL", e.to_string()).into())
                     })
                     .await?;
-                c.wait(async move {
-                    response
-                        .body_bytes()
-                        .await
-                        .map_err(|e| FnError::new("ATTACHMENT_URL", e.to_string()).into())
-                })
-                .await?
+                if !response.status().is_success() {
+                    return fail(
+                        "ATTACHMENT_URL",
+                        format!("The file URL answered {}.", response.status()),
+                    );
+                }
+                if !response.status().is_success() {
+                    return fail(
+                        "ATTACHMENT_URL",
+                        format!("The file URL answered {}.", response.status()),
+                    );
+                }
+                let bytes = c
+                    .wait(async move {
+                        response
+                            .body_bytes()
+                            .await
+                            .map_err(|e| FnError::new("ATTACHMENT_URL", e.to_string()).into())
+                    })
+                    .await?;
+                downloaded += bytes.len();
+                if downloaded > 10_000_000 {
+                    return fail(
+                        "ATTACHMENTS",
+                        "Send 1 to 10 attachments, with up to 10 MB of bytes in total.",
+                    );
+                }
+                bytes
             }
         };
+        downloaded += data.len();
+        if downloaded > 10_000_000 {
+            return fail(
+                "ATTACHMENTS",
+                "Send 1 to 10 attachments, with up to 10 MB of bytes in total.",
+            );
+        }
         let mut upload = flush_rest::FileUpload::new(name, data);
         if let Some(d) = file.description {
             upload = upload.description(d);
@@ -840,13 +867,23 @@ pub fn register(d: &mut Definitions) {
                             match key {
                                 "icon" => patch.icon = opt,
                                 "banner" => patch.banner = opt,
-                                "systemChannelID" => {
-                                    patch.system_channel_id =
-                                        opt.map(|v| v.and_then(|s| s.parse().ok()));
-                                }
-                                "afkChannelID" => {
-                                    patch.afk_channel_id =
-                                        opt.map(|v| v.and_then(|s| s.parse().ok()));
+                                "systemChannelID" | "afkChannelID" => {
+                                    let id = match opt.flatten() {
+                                        Some(v) => Some(Some(
+                                            v.parse::<flush_core::Snowflake>().map_err(|_| {
+                                                ScriptFailure::Fn(FnError::new(
+                                                    "GUILD_OPTIONS",
+                                                    format!("{key} must be a valid channel ID."),
+                                                ))
+                                            })?,
+                                        )),
+                                        None => Some(None),
+                                    };
+                                    if key == "systemChannelID" {
+                                        patch.system_channel_id = id;
+                                    } else {
+                                        patch.afk_channel_id = id;
+                                    }
                                 }
                                 _ => {}
                             }
@@ -1018,18 +1055,44 @@ pub fn register(d: &mut Definitions) {
                     offset: Some(number_arg(c, 3, 0, 0, 9975).await? as u32),
                     ..Default::default()
                 };
+                let mut query = format!(
+                    "limit={}&offset={}",
+                    search.limit.unwrap_or(25),
+                    search.offset.unwrap_or(0)
+                );
+                if let Some(name) = &search.name {
+                    if !name.is_empty() {
+                        query.push_str(&format!("&name={}", urlencoding(name)));
+                    }
+                }
                 let rest = c.ctx.rest.clone();
                 let result = c
                     .wait(async move {
-                        rest.search_threads(channel, &search)
-                            .await
-                            .map_err(ScriptFailure::from)
+                        rest.raw(
+                            "GET",
+                            &format!("/channels/{channel}/threads/search"),
+                            None,
+                            Some(&query),
+                            None,
+                        )
+                        .await
+                        .map_err(ScriptFailure::from)
                     })
                     .await?;
+                if result.get("indexing").is_some() {
+                    return Ok(json!({
+                        "threads": [], "hasMore": false, "total": Value::Null,
+                        "indexing": true,
+                        "retryAfter": result.get("retryAfter").or_else(|| result.get("retry_after")),
+                    }));
+                }
                 Ok(json!({
-                    "threads": result.threads.iter().map(channel_json).collect::<Vec<_>>(),
-                    "members": result.members.iter().map(|m| serde_json::to_value(m).unwrap_or(Value::Null)).collect::<Vec<_>>(),
-                    "hasMore": result.has_more,
+                    "threads": result.get("threads").cloned().unwrap_or(Value::Array(vec![])),
+                    "members": result.get("members").cloned().unwrap_or(Value::Array(vec![])),
+                    "hasMore": result.get("hasMore").or_else(|| result.get("has_more")),
+                    "total": result.get("totalResults").or_else(|| result.get("total_results")).or_else(|| result.get("total")),
+                    "indexing": false,
+                    "retryAfter": Value::Null,
                 }))
             })
         },
@@ -1163,4 +1226,17 @@ pub fn register(d: &mut Definitions) {
             },
         );
     }
+}
+
+fn urlencoding(input: &str) -> String {
+    input
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }
