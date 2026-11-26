@@ -15,13 +15,24 @@ fn variable_error(e: flush_framework::VariableError) -> ScriptFailure {
 
 /// TTL argument: `null` → keep the variable persistent (no expiry),
 /// otherwise a positive duration in ms.
+/// TTL in ms: non-negative safe integer, like `expiresAt` in yuzuha.
+fn ttl_ms(raw: &str) -> Result<u64, ScriptFailure> {
+    let n = support::finite(&Value::String(raw.to_string()))?;
+    if n < 0.0 || n.fract() != 0.0 || n > 9_007_199_254_740_991.0 {
+        return Err(FnError::new(
+            codes::VARIABLE,
+            "TTL must be a non-negative safe integer in milliseconds.",
+        )
+        .into());
+    }
+    Ok(n as u64)
+}
+
 fn ttl_arg(raw: &str) -> Result<Option<u64>, ScriptFailure> {
     if raw.trim().eq_ignore_ascii_case("null") {
         return Ok(None);
     }
-    Ok(Some(
-        support::finite(&Value::String(raw.to_string()))? as u64
-    ))
+    Ok(Some(ttl_ms(raw)?))
 }
 
 fn var_fns(d: &mut Definitions, scope: VariableScope, suffix: &str, requires_guild: bool) {
@@ -72,7 +83,7 @@ fn var_fns(d: &mut Definitions, scope: VariableScope, suffix: &str, requires_gui
                 let value = support::json_arg(&c.arg(1).await?);
                 match c.arg_count() {
                     3 => {
-                        let ttl = support::finite(&Value::String(c.arg(2).await?))? as u64;
+                        let ttl = ttl_ms(&c.arg(2).await?)?;
                         vars.set_with_ttl(scope, &name, value, ttl)
                             .map_err(variable_error)
                     }
