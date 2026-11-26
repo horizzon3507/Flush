@@ -247,10 +247,13 @@ fn parse_iso(raw: &str) -> Option<i64> {
     if rest.starts_with('T') || rest.starts_with(' ') {
         has_time = true;
         let time = &rest[1..];
+        if time.is_empty() {
+            return None;
+        }
         let tz_pos = time
             .find(['Z', 'z'])
-            .or_else(|| time[1..].find('+').map(|i| i + 1))
-            .or_else(|| time[1..].find('-').map(|i| i + 1));
+            .or_else(|| time.get(1..).and_then(|t| t.find('+')).map(|i| i + 1))
+            .or_else(|| time.get(1..).and_then(|t| t.find('-')).map(|i| i + 1));
         let (clock, tz) = match tz_pos {
             Some(pos) => (&time[..pos], &time[pos..]),
             None => (time, ""),
@@ -277,7 +280,20 @@ fn parse_iso(raw: &str) -> Option<i64> {
             }
         }
     }
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    };
+    if !(1..=12).contains(&month)
+        || !(1..=days_in_month).contains(&day)
+        || hh > 23
+        || mi > 59
+        || ss > 59
+    {
         return None;
     }
     // days_from_civil.
