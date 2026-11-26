@@ -448,33 +448,23 @@ pub fn register(d: &mut Definitions) {
 
     d.add(
         "inviteURL",
-        "util",
+        "sdk",
         1,
         2,
-        "[operação;código?]",
-        "Builds invite URLs (url).",
+        "[código;base?]",
+        "Builds an invite URL without any network. Uses the instance base when omitted.",
         |c| {
             Box::pin(async move {
-                let op = c.arg(0).await?;
-                let code = if c.arg_count() > 1 {
-                    c.arg(1).await?
+                let code = c.arg(0).await?;
+                let base = if c.arg_count() > 1 {
+                    normalize_invite_base(&http_base_str(&c.arg(1).await?)?)
                 } else {
-                    String::new()
+                    sdk_data::instance_endpoints()
+                        .get("invite")
+                        .cloned()
+                        .unwrap_or_else(|| "https://fluxer.gg".into())
                 };
-                match op.as_str() {
-                    "url" | "create" => {
-                        let base = sdk_data::instance_endpoints()
-                            .get("invite")
-                            .cloned()
-                            .unwrap_or_else(|| "https://fluxer.gg/".into());
-                        Ok(Value::String(if code.is_empty() {
-                            base
-                        } else {
-                            format!("{base}{code}")
-                        }))
-                    }
-                    _ => Err(cdn_error(format!("Unknown inviteURL operation '{op}'."))),
-                }
+                Ok(Value::String(format!("{base}/{code}")))
             })
         },
     );
