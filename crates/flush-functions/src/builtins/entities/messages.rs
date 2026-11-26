@@ -4,7 +4,7 @@
 
 use serde_json::{json, Value};
 
-use flush_core::message::{AllowedMentions, AttachmentRef, MessageSend};
+use flush_core::message::{AllowedMentions, MessageSend};
 use flush_core::Permissions;
 use flush_rest::uploads::FileUpload;
 
@@ -16,6 +16,80 @@ use super::common::{
     reaction_emoji, require_perms, rest, serialize, snowflake, user_id, Res,
 };
 use super::info::{channel_info, message_info, MESSAGE};
+
+/// yuzuha `resources.messages.purge`: scan recent history page by page,
+/// keep messages matching `author`, then bulk-delete in chunks of 100,
+/// falling back to per-message DELETE when the bulk route fails.
+async fn purge_channel(
+    c: &crate::call::ScriptCall<'_>,
+    channel: flush_core::Snowflake,
+    limit: u32,
+    author: Option<flush_core::Snowflake>,
+) -> Res<Value> {
+    let mut candidates: Vec<flush_core::Snowflake> = Vec::new();
+    let mut scanned: usize = 0;
+    let mut before: Option<flush_core::Snowflake> = None;
+    while scanned < limit as usize {
+        let wanted = std::cmp::min(100, limit - scanned as u32);
+        let page = rest(
+            c,
+            c.ctx
+                .rest
+                .list_messages_cursor(channel, wanted, before, None, None),
+        )
+        .await?;
+        let messages: Vec<flush_core::Message> =
+            serde_json::from_value(page).map_err(|e| err(codes::API_ERROR, e.to_string()))?;
+        if messages.is_empty() {
+            break;
+        }
+        let page_len = messages.len();
+        scanned += page_len;
+        for message in &messages {
+            if let Some(author) = author {
+                if message.author.id != author {
+                    continue;
+                }
+            }
+            candidates.push(message.id);
+        }
+        before = messages.last().map(|m| m.id);
+        if page_len < wanted as usize {
+            break;
+        }
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    let mut deleted_ids: Vec<flush_core::Snowflake> = Vec::new();
+    let mut via = "bulk";
+    let mut bulk_ok = true;
+    for chunk in candidates.chunks(100) {
+        if bulk_ok {
+            match rest(c, c.ctx.rest.bulk_delete(channel, chunk)).await {
+                Ok(ids) => {
+                    deleted_ids.extend(ids);
+                    continue;
+                }
+                Err(e) if matches!(&e, crate::errors::ScriptFailure::Fn(f) if f.code == codes::API_ERROR) =>
+                {
+                    bulk_ok = false;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        via = "each";
+        for id in chunk {
+            rest(c, c.ctx.rest.delete_message(channel, *id)).await?;
+            deleted_ids.push(*id);
+        }
+    }
+    let deleted = deleted_ids.len();
+    Ok(json!({
+        "deleted": deleted,
+        "deletedIDs": deleted_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        "via": via,
+    }))
+}
 
 pub fn register(d: &mut Definitions) {
     d.add(
@@ -149,7 +223,7 @@ pub fn register(d: &mut Definitions) {
                         .transpose()?
                         .unwrap_or(c.ctx.channel_id());
                     if paged {
-                        return rest(
+                        let page = rest(
                             c,
                             c.ctx.rest.reaction_users_page(
                                 channel,
@@ -159,7 +233,32 @@ pub fn register(d: &mut Definitions) {
                                 after,
                             ),
                         )
-                        .await;
+                        .await?;
+                        let users: Vec<Value> = match &page {
+                            Value::Array(list) => list.clone(),
+                            other => other
+                                .get("users")
+                                .cloned()
+                                .unwrap_or(Value::Array(vec![]))
+                                .as_array()
+                                .cloned()
+                                .unwrap_or_default(),
+                        };
+                        let ids: Vec<Value> = users
+                            .iter()
+                            .map(|u| match u {
+                                Value::String(_) => u.clone(),
+                                other => other
+                                    .get("id")
+                                    .cloned()
+                                    .unwrap_or(Value::Null),
+                            })
+                            .collect();
+                        return Ok(json!({
+                            "users": ids,
+                            "hasMore": page.get("hasMore").or_else(|| page.get("has_more")).cloned().unwrap_or(Value::Bool(false)),
+                            "nextAfter": page.get("nextAfter").or_else(|| page.get("next_after")).cloned().unwrap_or(Value::Null),
+                        }));
                     }
                     let users =
                         rest(c, c.ctx.rest.reaction_users(channel, message, &emoji, n)).await?;
@@ -339,16 +438,38 @@ pub fn register(d: &mut Definitions) {
                     .transpose()?
                     .unwrap_or(c.ctx.channel_id());
                 let n = match opt_arg(c, 1).await? {
-                    Some(s) => integer(&s)?,
+                    Some(s) => {
+                        let n = integer(&s)?;
+                        if !(1..=100).contains(&n) {
+                            return Err(err(
+                                codes::FUNCTION_ERROR,
+                                format!("Invalid limit: {n}."),
+                            ));
+                        }
+                        n
+                    }
                     None => 50,
                 };
                 let before = opt_arg(c, 2).await?;
+                if let Some(b) = &before {
+                    let valid = (11..=64).contains(&b.len())
+                        && b.chars().nth(10) == Some('T')
+                        && b[..10]
+                            .chars()
+                            .all(|ch| ch.is_ascii_digit() || ch == '-');
+                    if !valid {
+                        return Err(err(
+                            codes::FUNCTION_ERROR,
+                            "The pinned cursor must be an ISO timestamp with timezone.",
+                        ));
+                    }
+                }
                 let page = rest(
                     c,
-                    c.ctx.rest.pinned_messages_page(channel, n as u32, before.as_deref().and_then(|s| s.parse().ok())),
+                    c.ctx.rest.pinned_messages_page(channel, n as u32, before.as_deref()),
                 )
                 .await?;
-                Ok(page)
+                Ok(super::common::camelize(&page))
             })
         },
     );
@@ -402,19 +523,9 @@ pub fn register(d: &mut Definitions) {
                     ),
                 )
                 .await?;
-                let attachments: Vec<AttachmentRef> = uploads
-                    .iter()
-                    .enumerate()
-                    .map(|(i, upload)| AttachmentRef {
-                        id: i as u64,
-                        filename: name.clone(),
-                        upload_filename: Some(upload.filename.clone()),
-                        ..Default::default()
-                    })
-                    .collect();
                 let send = MessageSend {
                     content,
-                    attachments,
+                    attachments: uploads,
                     allowed_mentions: Some(AllowedMentions::no_ping()),
                     ..Default::default()
                 };
@@ -491,24 +602,31 @@ pub fn register(d: &mut Definitions) {
                 let channel_obj = context_channel(c, Some(channel)).await?;
                 require_perms(c, Some(&channel_obj), Permissions::MANAGE_MESSAGES).await?;
                 let value = arg_value(c, 0).await?;
-                let ids: Vec<String> = match &value {
-                    Value::Array(list) => list
-                        .iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect(),
-                    Value::String(s) => s.split(',').map(|s| s.trim().to_string()).collect(),
-                    _ => return Err(err(codes::INVALID_ARGUMENTS, "Expected message IDs.")),
-                };
-                if ids.is_empty() || ids.len() > 100 {
+                let Some(list) = value.as_array() else {
                     return Err(err(
                         codes::INVALID_ARGUMENTS,
-                        "Send 1 to 100 message IDs.",
+                        "Send an array of 1 to 100 numeric message IDs as strings.",
+                    ));
+                };
+                if list.is_empty() || list.len() > 100 {
+                    return Err(err(
+                        codes::INVALID_ARGUMENTS,
+                        "Send an array of 1 to 100 numeric message IDs as strings.",
                     ));
                 }
-                let ids: Vec<flush_core::Snowflake> = ids
-                    .iter()
-                    .map(|s| snowflake(s, "message"))
-                    .collect::<Result<_, _>>()?;
+                let mut ids: Vec<flush_core::Snowflake> = Vec::with_capacity(list.len());
+                for item in list {
+                    let raw = item.as_str().unwrap_or_default();
+                    if !raw.chars().all(|ch| ch.is_ascii_digit()) || raw.len() > 20 {
+                        return Err(err(
+                            codes::INVALID_ARGUMENTS,
+                            "Send an array of 1 to 100 numeric message IDs as strings.",
+                        ));
+                    }
+                    ids.push(snowflake(raw, "message")?);
+                }
+                ids.sort_unstable();
+                ids.dedup();
                 let deleted = rest(c, c.ctx.rest.bulk_delete(channel, &ids)).await?;
                 Ok(serialize(&deleted))
             })
@@ -536,12 +654,7 @@ pub fn register(d: &mut Definitions) {
                     .unwrap_or(c.ctx.channel_id());
                 let channel_obj = context_channel(c, Some(channel)).await?;
                 require_perms(c, Some(&channel_obj), Permissions::MANAGE_MESSAGES).await?;
-                let mut body = json!({ "limit": n });
-                if let Some(author) = author {
-                    body["author_id"] = json!(author.to_string());
-                }
-                let result = rest(c, c.ctx.rest.purge_messages_with(channel, body)).await?;
-                Ok(result)
+                purge_channel(c, channel, n as u32, author).await
             })
         },
     );
@@ -569,20 +682,34 @@ pub fn register(d: &mut Definitions) {
                     .unwrap_or(c.ctx.channel_id());
                 let channel_obj = context_channel(c, Some(channel)).await?;
                 require_perms(c, Some(&channel_obj), Permissions::MANAGE_MESSAGES).await?;
-                let result = rest(
-                    c,
-                    c.ctx.rest.purge_messages_with(
-                        channel,
-                        json!({ "limit": n, "author_id": c.ctx.bot_id.map(|b| b.to_string()).unwrap_or_default() }),
-                    ),
-                )
-                .await?;
-                Ok(result)
+                purge_channel(c, channel, n as u32, c.ctx.bot_id).await
             })
         },
     );
 
     // ---- entities-channels.ts (message-side) ----
+
+    for (name, description) in [
+        ("acknowledgePins", "Acknowledges the pinned messages of the current channel; requires ReadMessageHistory of author and bot."),
+        ("clearReadState", "Clears the read state of the current channel; requires ReadMessageHistory of author and bot."),
+    ] {
+        d.add(name, "messages", 0, 0, "", description, move |c| {
+            Box::pin(async move {
+                let channel_id = c.ctx.channel_id();
+                let channel = context_channel(c, Some(channel_id)).await?;
+                require_perms(c, Some(&channel), Permissions::READ_MESSAGE_HISTORY).await?;
+                match name {
+                    "acknowledgePins" => {
+                        rest(c, c.ctx.rest.acknowledge_pins(channel_id)).await?
+                    }
+                    _ => {
+                        rest(c, c.ctx.rest.clear_read_state(channel_id)).await?
+                    }
+                }
+                Ok(Value::Null)
+            })
+        });
+    }
 
     d.add(
         "createDM",
