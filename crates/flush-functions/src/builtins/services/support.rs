@@ -261,7 +261,10 @@ thread_local! {
             .map(|table| {
                 table
                     .iter()
-                    .filter_map(|(k, v)| v.as_u64().map(|n| (k.to_lowercase(), n as u128)))
+                    .filter_map(|(k, v)| {
+                        crate::builtins::services::sdk_data::flag_value(v)
+                            .map(|n| (k.to_lowercase(), n))
+                    })
                     .collect()
             })
             .unwrap_or_default()

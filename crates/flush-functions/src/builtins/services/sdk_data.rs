@@ -39,6 +39,14 @@ pub fn flag_tables() -> &'static HashMap<String, HashMap<String, u128>> {
     })
 }
 
+/// Flag value: numeric or a decimal string (`"4"`).
+pub fn flag_value(value: &Value) -> Option<u128> {
+    value
+        .as_u64()
+        .map(u128::from)
+        .or_else(|| value.as_str()?.parse().ok())
+}
+
 fn table_for(name: &str) -> HashMap<String, u128> {
     const KEY: &[(&str, &str)] = &[
         ("permissions", "PermissionFlags"),
@@ -66,8 +74,9 @@ fn table_for(name: &str) -> HashMap<String, u128> {
                 .iter()
                 .filter_map(|(k, v)| {
                     // TS numeric enums serialize both directions; flag tables
-                    // keep only name → number.
-                    v.as_u64().map(|n| (k.clone(), n as u128))
+                    // keep only name → number. Values may be strings
+                    // (`"4"`) or numbers.
+                    flag_value(v).map(|n| (k.clone(), n))
                 })
                 .collect()
         })
