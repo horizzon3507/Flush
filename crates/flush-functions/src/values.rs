@@ -126,7 +126,15 @@ fn split_comparison(value: &str) -> Option<(&str, &str, &str)> {
 /// `deepEqual`: numbers compare by numeric value (1 === 1.0 in JS).
 pub fn deep_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Number(x), Value::Number(y)) => {
+            // Integers compare exactly so distinct large values never
+            // collapse into the same float; only real doubles use f64.
+            match (x.as_i64(), x.as_u64(), y.as_i64(), y.as_u64()) {
+                (Some(a), _, Some(b), _) => a == b,
+                (_, Some(a), _, Some(b)) => a == b,
+                _ => x.as_f64() == y.as_f64(),
+            }
+        }
         (Value::Array(x), Value::Array(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| deep_equal(a, b))
         }
