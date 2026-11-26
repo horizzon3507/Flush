@@ -336,7 +336,19 @@ pub fn register(d: &mut Definitions) {
                     .await?
                     .map(|s| valid_emoji_name(&s))
                     .transpose()?;
-                let description = opt_arg(c, 2).await?;
+                let description = if c.arg_count() > 2 {
+                    Some(c.arg(2).await?)
+                } else {
+                    None
+                };
+                if let Some(d) = &description {
+                    if d.len() > 100 {
+                        return Err(err(
+                            codes::FUNCTION_ERROR,
+                            "Description must be at most 100 characters.",
+                        ));
+                    }
+                }
                 let reason = opt_arg(c, 3).await?;
                 require_perms(c, None, Permissions::MANAGE_EXPRESSIONS).await?;
                 let patch = flush_rest::resources::StickerPatch {
