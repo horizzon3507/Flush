@@ -170,6 +170,11 @@ impl CaseStore {
             .unwrap_or_default()
     }
 
+    /// Case count of one guild, without cloning the history.
+    pub fn count(&mut self, guild_id: &str) -> usize {
+        self.load().get(guild_id).map_or(0, |g| g.cases.len())
+    }
+
     pub fn get(&mut self, guild_id: &str, case_id: u64) -> Option<ModCase> {
         self.load()
             .get(guild_id)?

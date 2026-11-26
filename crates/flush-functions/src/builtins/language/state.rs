@@ -292,7 +292,7 @@ pub fn register(d: &mut Definitions) {
                 let Some(cases) = c.ctx.cases.clone() else {
                     return Err(FnError::new("STORE", "Case store is not configured.").into());
                 };
-                let count = cases.lock().unwrap().for_guild(&guild_id.to_string()).len();
+                let count = cases.lock().unwrap().count(&guild_id.to_string());
                 Ok(Value::from(count as u64))
             })
         },
