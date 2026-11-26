@@ -230,30 +230,6 @@ pub fn register(d: &mut Definitions) {
         },
     );
 
-    for (name, add) in [("addThreadMember", true), ("removeThreadMember", false)] {
-        d.add(
-            name,
-            "threads",
-            2,
-            2,
-            "[thread;usuário]",
-            "Adds or removes a thread member.",
-            move |c| {
-                Box::pin(async move {
-                    c.ctx.require_guild()?;
-                    let thread = channel_id(&c.arg(0).await?)?;
-                    let user = user_id(&c.arg(1).await?)?;
-                    if add {
-                        rest(c, c.ctx.rest.add_thread_member(thread, user)).await?;
-                    } else {
-                        rest(c, c.ctx.rest.remove_thread_member(thread, user)).await?;
-                    }
-                    Ok(Value::Null)
-                })
-            },
-        );
-    }
-
     d.add(
         "threadMember",
         "threads",
