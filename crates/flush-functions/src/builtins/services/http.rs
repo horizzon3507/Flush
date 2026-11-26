@@ -400,6 +400,7 @@ pub fn register(d: &mut Definitions) {
                     let mut buf = vec![0u8; 8 * 1024];
                     let mut pending: Vec<u8> = Vec::new();
                     let mut index_ = 0usize;
+                    let mut total = 0usize;
                     let mut output = String::new();
                     async fn run_chunk(
                         c: &crate::call::ScriptCall<'_>,
@@ -434,6 +435,13 @@ pub fn register(d: &mut Definitions) {
                             .await?;
                         if read == 0 {
                             break;
+                        }
+                        total += read;
+                        if total > BODY_LIMIT {
+                            return Err(http_error(
+                                codes::HTTP,
+                                "The response body exceeded the limit.",
+                            ));
                         }
                         pending.extend_from_slice(&buf[..read]);
                         // Emit the longest UTF-8-valid prefix; keep the

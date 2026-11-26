@@ -357,6 +357,39 @@ async fn http_enforces_body_limit() {
     assert_eq!(guard_code(&err), "HTTP");
 }
 
+#[async_std::test]
+async fn http_stream_enforces_body_limit() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().unwrap();
+        let mut head = [0u8; 8192];
+        let _ = conn.read(&mut head);
+        let body = vec![b'a'; 6 * 1024 * 1024];
+        write!(
+            conn,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        conn.write_all(&body).unwrap();
+    });
+
+    let ctx = ctx().await;
+    let rt = runtime();
+    let err = rt
+        .run(
+            &ctx,
+            &format!("$httpStream[GET;http://127.0.0.1:{port}/big;$let[i;0]]"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(guard_code(&err), "HTTP");
+}
+
 #[test]
 fn scheduler_edit_rejects_unknown_keys_atomically() {
     use flush_functions::scheduler::{ScheduledJob, ScriptScheduler};
