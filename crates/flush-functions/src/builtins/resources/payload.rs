@@ -27,10 +27,6 @@ const MESSAGE_LENGTH: usize = 2000;
 const MAX_STICKERS: usize = 3;
 const MAX_MENTION_IDS: usize = 100;
 
-fn is_snowflake_text(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 20 && s.chars().all(|c| c.is_ascii_digit())
-}
-
 /// `snowflakes(value, max, label)`: array of numeric IDs (numbers allowed).
 fn snowflakes(value: &Value, max: usize, label: &str) -> FnResult<Vec<String>> {
     let ids = match value {
@@ -51,7 +47,7 @@ fn snowflakes(value: &Value, max: usize, label: &str) -> FnResult<Vec<String>> {
             if ids.len() <= max
                 && ids
                     .iter()
-                    .all(|id| is_snowflake_text(id) && id.parse::<u64>().is_ok()) =>
+                    .all(|id| id.parse::<flush_core::Snowflake>().is_ok()) =>
         {
             Ok(ids)
         }

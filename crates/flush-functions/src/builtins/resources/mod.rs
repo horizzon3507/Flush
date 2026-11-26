@@ -47,11 +47,10 @@ pub fn operator(c: &ScriptCall<'_>) -> FnResult<()> {
 
 /// `snowflake(raw)`: a numeric 64-bit ID as `Snowflake`.
 pub fn snowflake(raw: &str) -> FnResult<Snowflake> {
-    let ok = raw.len() <= 20 && !raw.is_empty() && raw.chars().all(|c| c.is_ascii_digit());
-    if !ok || raw.parse::<u64>().is_err() {
-        return invalid("Enter a numeric 64-bit ID.");
+    match raw.parse::<Snowflake>() {
+        Ok(id) => Ok(id),
+        Err(_) => invalid("Enter a numeric 64-bit ID."),
     }
-    Ok(raw.parse().unwrap())
 }
 
 /// `integer(raw, min, max)` over a JSON value (strings of digits allowed).
