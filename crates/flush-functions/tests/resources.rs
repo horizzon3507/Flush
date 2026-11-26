@@ -370,7 +370,10 @@ async fn gateway_constants_and_shard_math() {
     assert_eq!(out, "false");
     let out = rt.run(&ctx, "$gatewayShouldReconnect[4009]").await.unwrap();
     assert_eq!(out, "true");
-    let out = rt.run(&ctx, "$shardIdForGuild[1234567890123;8]").await.unwrap();
+    let out = rt
+        .run(&ctx, "$shardIdForGuild[1234567890123;8]")
+        .await
+        .unwrap();
     assert_eq!(out, ((1234567890123u64 >> 22) % 8).to_string());
 }
 
@@ -455,4 +458,200 @@ async fn owner_gates_instance_functions() {
     assert_eq!(err.code(), "GUARD");
     let err = rt.run(&ctx, "$clusterInfo[]").await.unwrap_err();
     assert_eq!(err.code(), "GUARD");
+}
+
+async fn rig_admin(respond: Responder) -> (Runtime, Arc<ScriptContext>, Log, String) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let log: Log = Arc::default();
+    let log2 = log.clone();
+    task::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            task::spawn(serve(stream, log2.clone(), respond.clone()));
+        }
+    });
+    let mut config = RestConfig::new("tok");
+    config.api_base = Some(base.clone());
+    config.gateway_url = Some("ws://unused".into());
+    let rest = RestClient::new(config).await.unwrap();
+    let admin = flush_core::Permissions::ADMINISTRATOR.to_string();
+    let guild: flush_core::Guild = serde_json::from_value(json!({
+        "id": "333", "name": "g", "owner_id": "900",
+        "roles": [{"id": "9", "position": 1, "permissions": admin}]
+    }))
+    .unwrap();
+    let member: flush_core::MemberUser = serde_json::from_value(json!({
+        "user": {"id": "444", "username": "tester"}, "roles": ["9"]
+    }))
+    .unwrap();
+    let bot_member: flush_core::MemberUser = serde_json::from_value(json!({
+        "user": {"id": "555", "username": "bot"}, "roles": ["9"]
+    }))
+    .unwrap();
+    let rt = Runtime::new();
+    rt.register_all(define_functions(register_builtins))
+        .unwrap();
+    (
+        rt,
+        ctx_full(
+            rest,
+            Some(guild),
+            Some(member),
+            Some(bot_member),
+            vec!["444".parse().unwrap()],
+        )
+        .await,
+        log,
+        base,
+    )
+}
+
+#[async_std::test]
+async fn snowflake_rejects_padded_and_above_i64_max() {
+    let (rt, ctx, _log, _base) = rig(responder(|_| (200, json!({})))).await;
+    let err = rt.run(&ctx, "$shardIdForGuild[007;8]").await.unwrap_err();
+    assert_eq!(err.code(), "GUARD");
+    let err = rt
+        .run(&ctx, "$shardIdForGuild[9223372036854775808;8]")
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "GUARD");
+    let err = rt.run(&ctx, r#"$messageOptions[;007]"#).await.unwrap_err();
+    assert_eq!(err.code(), "MESSAGE_OPTION");
+}
+
+#[async_std::test]
+async fn editguild_rejects_bad_channel_id() {
+    let (rt, ctx, _log, _base) = rig_admin(responder(|_| (200, json!({})))).await;
+    let err = rt
+        .run(&ctx, r#"$editGuild[{"afkChannelID":"abc"}]"#)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "GUILD_OPTIONS");
+}
+
+#[async_std::test]
+async fn editmessage_keeps_embeds_on_text_edit() {
+    let (rt, ctx, log, _base) = rig(responder(|_| {
+        (
+            200,
+            json!({"id": "9", "channel_id": "222", "author": {"id": "1", "username": "b"}}),
+        )
+    }))
+    .await;
+    rt.run(&ctx, "$editMessage[222;555;new text]")
+        .await
+        .unwrap();
+    let body = log.lock().unwrap()[0].json();
+    assert_eq!(body["content"], "new text");
+    assert!(body.get("embeds").is_none() || body["embeds"].is_null());
+}
+
+#[async_std::test]
+async fn sendattachments_rejects_error_page_and_bad_host() {
+    let (rt, ctx, _log, _base) = rig(responder(|seen| {
+        if seen.path.starts_with("/file") {
+            (404, json!({"error": "no"}))
+        } else {
+            (
+                200,
+                json!({"id": "9", "channel_id": "222", "author": {"id": "1", "username": "b"}}),
+            )
+        }
+    }))
+    .await;
+    let err = rt
+        .run(
+            &ctx,
+            r#"$sendAttachments[222;[{"url":"http://localhost:1/file","name":"a.txt"}]]"#,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.code() == "ATTACHMENT_URL" || err.code() == "API_ERROR" || err.code() == "ATTACHMENTS"
+    );
+    // A non-ASCII first character must error, not panic on a byte slice.
+    let err = rt
+        .run(
+            &ctx,
+            r#"$sendAttachments[222;[{"url":"éhttps://example.com/f","name":"a.txt"}]]"#,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "ATTACHMENT_URL");
+}
+
+#[async_std::test]
+async fn embed_timestamp_rejects_non_ascii_digits() {
+    let (rt, ctx, _log, _base) = rig(responder(|_| (200, json!({})))).await;
+    let err = rt
+        .run(
+            &ctx,
+            "$reply[$embed[$embedTimestamp[２０２６-01-20T21:30:00Z]]]",
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "EMBED_TIMESTAMP");
+}
+
+#[async_std::test]
+async fn readiness_functions_pass_when_bot_connected() {
+    let (rt, ctx, _log, _base) = rig(responder(|_| (200, json!({})))).await;
+    let out = rt.run(&ctx, "$botReadiness").await.unwrap();
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["ready"], true);
+    rt.run(&ctx, "$requireBotReady").await.unwrap();
+}
+
+#[async_std::test]
+async fn gatewayinfo_maps_session_start_limit() {
+    let (rt, ctx, _log, _base) = rig_admin(responder(|seen| {
+        if seen.path == "/v1/gateway/bot" {
+            (
+                200,
+                json!({
+                    "url": "wss://gw", "shards": 4,
+                    "session_start_limit": {
+                        "total": 1000, "remaining": 999,
+                        "reset_after": 14400000, "max_concurrency": 1
+                    }
+                }),
+            )
+        } else {
+            (200, json!({}))
+        }
+    }))
+    .await;
+    let out = rt.run(&ctx, "$gatewayInfo").await.unwrap();
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["url"], "wss://gw");
+    assert_eq!(v["sessionStartLimit"]["remaining"], 999);
+    assert_eq!(v["sessionStartLimit"]["resetAfter"], 14400000);
+}
+
+#[async_std::test]
+async fn searchthreads_returns_total_and_indexing() {
+    let (rt, ctx, _log, _base) = rig_admin(responder(|seen| {
+        if seen.path.contains("/threads/search") {
+            (
+                200,
+                json!({"threads": [], "members": [], "hasMore": false, "totalResults": 7}),
+            )
+        } else {
+            (200, json!({}))
+        }
+    }))
+    .await;
+    let out = rt.run(&ctx, "$searchThreads[222;name]").await.unwrap();
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["total"], 7);
+    assert_eq!(v["indexing"], false);
+    assert_eq!(v["hasMore"], false);
+}
+
+#[async_std::test]
+async fn messagesend_deserializes_null_sticker_ids() {
+    let send: flush_core::MessageSend =
+        serde_json::from_value(json!({"content": "hi", "sticker_ids": null})).unwrap();
+    assert!(send.sticker_ids.is_empty());
 }
