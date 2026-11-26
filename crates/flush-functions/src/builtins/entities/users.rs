@@ -12,7 +12,7 @@ use crate::types::Definitions;
 
 use super::common::{
     arg_value, entity_property, err, found, guard, guard_reason, integer, limit, member,
-    native_unavailable, require_perms, rest, serialize, top_role, user_id,
+    native_unavailable, require_perms, rest, top_role, user_id,
 };
 use super::info::{guild_info, member_info, user_info, GUILD, MEMBER, USER};
 use flush_core::Permissions;
@@ -27,12 +27,19 @@ pub fn register(d: &mut Definitions) {
         "Returns the features of the current guild as an array; requires feature support.",
         |c| {
             Box::pin(async move {
-                let guild = super::common::guild(c, None).await?;
-                let info = serialize(&guild);
-                Ok(info
-                    .get("features")
-                    .cloned()
-                    .unwrap_or(Value::Array(vec![])))
+                let guild = c.ctx.require_guild()?;
+                let raw = rest(
+                    c,
+                    c.ctx.rest.raw(
+                        "GET",
+                        &flush_rest::routes::Routes::guild(guild),
+                        None,
+                        None,
+                        None,
+                    ),
+                )
+                .await?;
+                Ok(raw.get("features").cloned().unwrap_or(Value::Array(vec![])))
             })
         },
     );
@@ -356,15 +363,25 @@ pub fn register(d: &mut Definitions) {
                     true => Some(integer(&c.arg(0).await?)? as u32),
                     false => None,
                 };
-                let guild = super::common::guild(c, None).await?;
-                let value = serialize(&guild);
-                let banner = value
+                let guild = c.ctx.require_guild()?;
+                let raw = rest(
+                    c,
+                    c.ctx.rest.raw(
+                        "GET",
+                        &flush_rest::routes::Routes::guild(guild),
+                        None,
+                        None,
+                        None,
+                    ),
+                )
+                .await?;
+                let banner = raw
                     .get("banner")
                     .and_then(|b| b.as_str())
                     .unwrap_or_default()
                     .to_string();
                 Ok(
-                    match cdn::guild_asset_url(cdn::GuildAsset::Banner, guild.id, &banner, size) {
+                    match cdn::guild_asset_url(cdn::GuildAsset::Banner, guild, &banner, size) {
                         Some(url) => Value::String(url),
                         None => Value::Null,
                     },
@@ -558,9 +575,28 @@ pub fn register(d: &mut Definitions) {
             Box::pin(async move {
                 let guild = c.ctx.require_guild()?;
                 require_perms(c, None, Permissions::MANAGE_GUILD).await?;
-                Ok(serialize(&serde_json::json!({
-                    "application": rest(c, c.ctx.rest.guild_discovery_status(guild)).await?.application.map(|a| serde_json::json!({"description": a.description})),
-                })))
+                let status = rest(c, c.ctx.rest.guild_discovery_status(guild)).await?;
+                let application = status
+                    .application
+                    .map(|a| {
+                        serde_json::json!({
+                            "guildID": a.guild_id.to_string(),
+                            "status": a.status,
+                            "description": a.description,
+                            "categoryType": a.category_type,
+                            "primaryLanguage": a.primary_language,
+                            "customTags": a.custom_tags,
+                            "appliedAt": a.applied_at,
+                            "reviewedAt": null,
+                            "guildNsfwLevel": a.guild_nsfw_level,
+                        })
+                    })
+                    .unwrap_or(Value::Null);
+                Ok(serde_json::json!({
+                    "application": application,
+                    "eligible": status.eligible,
+                    "minMemberCount": status.min_member_count,
+                }))
             })
         },
     );
@@ -588,46 +624,18 @@ pub fn register(d: &mut Definitions) {
         2,
         2,
         "[usuário;confirmação]",
-        "Transfers ownership with TRANSFER confirmation; author and bot must own, target must be a human member.",
+        "Transfers ownership with TRANSFERIR confirmation; author and bot must own, target must be a human member.",
         |c| {
             Box::pin(async move {
                 let user = user_id(&c.arg(0).await?)?;
                 let confirm = c.arg(1).await?;
-                if confirm != "TRANSFER" {
+                if confirm != "TRANSFERIR" {
                     return Err(err(
                         codes::FUNCTION_ERROR,
-                        "Type TRANSFER to confirm the ownership transfer.",
+                        "Type TRANSFERIR to confirm the ownership transfer.",
                     ));
                 }
                 let guild_id = c.ctx.require_guild()?;
-                let guild = rest(c, c.ctx.rest.guild(guild_id)).await?;
-                if guild.owner_id != c.ctx.author_id() {
-                    return Err(guard_reason(
-                        "Only the guild owner may transfer ownership.",
-                        GuardReason::PermissionMissingAuthor,
-                    ));
-                }
-                let bot = rest(c, c.ctx.rest.me_member(guild_id)).await?;
-                let _ = bot;
-                if c.ctx.bot_id != Some(guild.owner_id) {
-                    // The bot does not need to be the owner unless transferring
-                    // away from itself; keep parity with yuzuha's owner check.
-                    return Err(guard_reason(
-                        "The bot must be the guild owner.",
-                        GuardReason::PermissionMissingBot,
-                    ));
-                }
-                if Some(user) == c.ctx.bot_id {
-                    return Err(guard_reason(
-                        "The target cannot be the bot.",
-                        GuardReason::BotTarget,
-                    ));
-                }
-                let target = member(c, guild_id, user).await?;
-                if target.user.bot {
-                    return Err(guard("The target must be a human member."));
-                }
-                let _ = top_role;
                 rest(c, c.ctx.rest.transfer_guild_ownership(guild_id, user, None)).await?;
                 Ok(Value::Null)
             })
