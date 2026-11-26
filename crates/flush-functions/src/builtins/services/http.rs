@@ -108,6 +108,34 @@ fn transport(e: surf::Error) -> ScriptFailure {
     http_error(codes::HTTP, format!("HTTP request failed: {e}"))
 }
 
+/// Reads a response body incrementally, failing as soon as it exceeds
+/// `BODY_LIMIT` instead of buffering it whole.
+async fn read_body_limited(
+    c: &crate::call::ScriptCall<'_>,
+    response: &mut surf::Response,
+    code: &'static str,
+) -> Result<Vec<u8>, ScriptFailure> {
+    let mut body = response.take_body();
+    let mut buf = vec![0u8; 8 * 1024];
+    let mut out = Vec::new();
+    loop {
+        let read = c
+            .wait(async {
+                body.read(&mut buf)
+                    .await
+                    .map_err(|e| http_error(code, format!("HTTP request failed: {e}")))
+            })
+            .await?;
+        if read == 0 {
+            return Ok(out);
+        }
+        if out.len() + read > BODY_LIMIT {
+            return Err(http_error(code, "The response body exceeded the limit."));
+        }
+        out.extend_from_slice(&buf[..read]);
+    }
+}
+
 async fn request(
     c: &crate::call::ScriptCall<'_>,
     method: surf::http::Method,
@@ -185,15 +213,7 @@ pub fn register(d: &mut Definitions) {
                         )
                     })
                     .collect();
-                let body = c
-                    .wait(async { response.body_bytes().await.map_err(transport) })
-                    .await?;
-                if body.len() > BODY_LIMIT {
-                    return Err(http_error(
-                        codes::HTTP,
-                        "The response body exceeded the limit.",
-                    ));
-                }
+                let body = read_body_limited(c, &mut response, codes::HTTP).await?;
                 Ok(json!({
                     "status": status,
                     "headers": headers_json,
@@ -230,15 +250,7 @@ pub fn register(d: &mut Definitions) {
                 )
                 .await?;
                 let status = u16::from(response.status());
-                let body = c
-                    .wait(async { response.body_bytes().await.map_err(transport) })
-                    .await?;
-                if body.len() > BODY_LIMIT {
-                    return Err(http_error(
-                        codes::HTTP_JSON,
-                        "The response body exceeded the limit.",
-                    ));
-                }
+                let body = read_body_limited(c, &mut response, codes::HTTP_JSON).await?;
                 let parsed = if body.is_empty() {
                     Value::Null
                 } else {
@@ -349,9 +361,7 @@ pub fn register(d: &mut Definitions) {
                 let mut response =
                     request(c, method, url, Some(body), headers, Some(content_type)).await?;
                 let status = u16::from(response.status());
-                let body = c
-                    .wait(async { response.body_bytes().await.map_err(transport) })
-                    .await?;
+                let body = read_body_limited(c, &mut response, codes::HTTP_MULTIPART).await?;
                 Ok(json!({
                     "status": status,
                     "body": String::from_utf8_lossy(&body),
