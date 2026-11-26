@@ -1,6 +1,7 @@
 //! Shared helpers for the `services` builtin group (mirrors
 //! `src/commands/arguments.ts` and `src/domain/values.ts` of yuzuha).
 
+use std::future::Future;
 use std::sync::Arc;
 
 use flush_core::Permissions;

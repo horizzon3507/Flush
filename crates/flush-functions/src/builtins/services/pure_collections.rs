@@ -1,6 +1,7 @@
 //! Port of `src/functions/builtins/pure-collections.ts`.
 
 use serde_json::{json, Value};
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::errors::{codes, is_uncatchable, FnError, ScriptFailure};
@@ -75,7 +76,7 @@ async fn with_loop_state<R>(
     c: &crate::call::ScriptCall<'_>,
     index: usize,
     value: &Value,
-    body: impl std::future::Future<Output = R>,
+    body: impl Future<Output = R>,
 ) -> R {
     let saved_index = c.ctx.var_get("__loopIndex");
     let saved_value = c.ctx.var_get("__loopValue");
