@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 
-use flush_core::{ChannelType, OverwriteType, Permissions};
+use flush_core::{ChannelType, OverwriteType, Permissions, Snowflake};
 use flush_rest::client::ChannelCreate;
 use flush_rest::resources::ChannelPosition;
 
@@ -641,6 +641,64 @@ pub fn register(d: &mut Definitions) {
             })
         },
     );
+
+    for method in ["addRecipient", "removeRecipient"] {
+        d.add(
+            method,
+            "channels",
+            1,
+            1,
+            "[usuário]",
+            "Changes a recipient only in the current group DM; adding requires ownership and removing requires membership. Never touches the bot.",
+            move |c| {
+                Box::pin(async move {
+                    if c.ctx.message.guild_id.is_some() {
+                        return Err(super::common::guard(
+                            "This operation requires the current group DM.",
+                        ));
+                    }
+                    let member = user_id(&c.arg(0).await?)?;
+                    let channel_obj = context_channel(c, Some(c.ctx.channel_id())).await?;
+                    let recipient_ids: Vec<Snowflake> = channel_obj
+                        .recipients
+                        .iter()
+                        .map(|r| r.id)
+                        .collect();
+                    if channel_obj.kind as u16 != 3
+                        || !recipient_ids.contains(&c.ctx.author_id())
+                    {
+                        return Err(super::common::guard(
+                            "This operation requires membership in the current group DM.",
+                        ));
+                    }
+                    if Some(member) == c.ctx.bot_id {
+                        return Err(super::common::guard_reason(
+                            "The bot cannot be changed as a recipient.",
+                            crate::errors::GuardReason::BotTarget,
+                        ));
+                    }
+                    if method == "addRecipient" && recipient_ids.contains(&member) {
+                        return Err(err(
+                            codes::INVALID_ARGUMENTS,
+                            "The user is already in the group.",
+                        ));
+                    }
+                    if method == "removeRecipient" && !recipient_ids.contains(&member) {
+                        return Err(err(
+                            codes::INVALID_ARGUMENTS,
+                            "The user is not in the group.",
+                        ));
+                    }
+                    if method == "addRecipient" {
+                        rest(c, c.ctx.rest.add_recipient(channel_obj.id, member)).await?;
+                    } else {
+                        rest(c, c.ctx.rest.remove_recipient(channel_obj.id, member)).await?;
+                    }
+                    Ok(Value::Null)
+                })
+            },
+        );
+    }
 }
 
 async fn opt_arg(c: &crate::call::ScriptCall<'_>, i: usize) -> Res<Option<String>> {

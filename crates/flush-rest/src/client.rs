@@ -153,7 +153,7 @@ pub struct RolePatch {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ChannelCreate {
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub kind: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic: Option<String>,
