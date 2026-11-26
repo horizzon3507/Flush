@@ -107,6 +107,17 @@ impl Evaluator {
         Ok(())
     }
 
+    /// `checkOutput(value)`: rejects values longer than the output
+    /// limit. Non-accumulating, like yuzuha's one-argument checkOutput.
+    pub(crate) fn enforce_output_limit(&self, text: &str) -> Result<(), ScriptFailure> {
+        if text.len() > self.limits.output {
+            return Err(
+                FnError::new(codes::OUTPUT_LIMIT, "Exceeded the maximum output size.").into(),
+            );
+        }
+        Ok(())
+    }
+
     /// `evaluate(nodes)`: a node's output text.
     pub async fn evaluate(
         &self,
@@ -175,8 +186,11 @@ impl Evaluator {
         match (definition.execute)(&call).await {
             Ok(value) => {
                 let output = values::text(&value);
-                self.count_output(&output)?;
-                Ok(output)
+                // Non-accumulating, like yuzuha's checkOutput: a value that
+                // passed the same check inside the builtin (before its store
+                // commit) cannot be rejected here afterwards.
+                self.enforce_output_limit(&output)?;
+                Ok(value)
             }
             Err(failure) => Err(failure),
         }

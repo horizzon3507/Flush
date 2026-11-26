@@ -89,10 +89,11 @@ impl<'a> ScriptCall<'a> {
         Box::pin(self.text(0, separator)).await
     }
 
-    /// `checkOutput(value)`: count a string the builtin itself produced
-    /// toward the output limit (yuzuha's one-argument `checkOutput`).
-    pub fn count_output(&self, text: &str) -> Result<(), ScriptFailure> {
-        self.evaluator.count_output(text)
+    /// `checkOutput(value)`: reject a value the builtin itself produced
+    /// when it is longer than the output limit. Non-accumulating, like
+    /// yuzuha's one-argument `checkOutput`.
+    pub fn enforce_output_limit(&self, text: &str) -> Result<(), ScriptFailure> {
+        self.evaluator.enforce_output_limit(text)
     }
 
     /// `checkOutput(previous, current)`: prefer `current` when the nested
