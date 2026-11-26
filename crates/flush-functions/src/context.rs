@@ -164,6 +164,9 @@ impl ScriptContext {
         roles: &[Snowflake],
         member_id: Snowflake,
     ) -> u64 {
+        if member_id == guild.owner_id {
+            return u64::MAX;
+        }
         let everyone_bits = guild
             .roles
             .iter()
