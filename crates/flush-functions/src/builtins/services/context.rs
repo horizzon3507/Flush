@@ -183,15 +183,15 @@ pub fn register(d: &mut Definitions) {
         "A slice of the input tokens joined by spaces.",
         |c| {
             Box::pin(async move {
-                let start = support::index(&Value::String(c.arg(0).await?), 1)?;
+                let start = support::index(&Value::String(c.arg(0).await?), 0)?;
                 let tokens = support::tokenize(&c.ctx.input)?;
                 let end = if c.arg_count() > 1 {
-                    support::index(&Value::String(c.arg(1).await?), 1)?
+                    support::index(&Value::String(c.arg(1).await?), 0)?
                 } else {
                     tokens.len()
                 };
-                let slice =
-                    &tokens[start.min(tokens.len()).saturating_sub(1)..end.min(tokens.len())];
+                let from = start.min(tokens.len());
+                let slice = &tokens[from..end.min(tokens.len()).max(from)];
                 Ok(Value::String(slice.join(" ")))
             })
         },
