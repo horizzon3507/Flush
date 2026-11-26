@@ -375,14 +375,19 @@ pub fn register(d: &mut Definitions) {
         "http",
         3,
         5,
-        "[url;cabeçalhos?;código;formato?;método?]",
+        "[método;url;código;corpo?;cabeçalhos?]",
         "Streams a response body in chunks through a loop body.",
         |c| {
             Box::pin(async move {
-                let url = url(&c.arg(0).await?)?;
-                let headers = headers(&c.arg(1).await?)?;
-                let mut response =
-                    request(c, surf::http::Method::Get, url, None, headers, None).await?;
+                let method = method(&c.arg(0).await?)?;
+                let url = url(&c.arg(1).await?)?;
+                let body = body_arg(c, 3).await?;
+                let headers = headers(&if c.arg_count() > 4 {
+                    c.arg(4).await?
+                } else {
+                    String::new()
+                })?;
+                let mut response = request(c, method, url, body, headers, None).await?;
                 let status = u16::from(response.status());
                 if !(200..300).contains(&status) {
                     return Err(http_error(codes::HTTP, format!("HTTP {status}.")));
@@ -406,9 +411,9 @@ pub fn register(d: &mut Definitions) {
                             "__httpChunk",
                             Value::String(String::from_utf8_lossy(bytes).into_owned()),
                         );
-                        *index_ += 1;
                         c.ctx
                             .var_set("__httpChunkIndex", Value::from(*index_ as i64));
+                        *index_ += 1;
                         let out = Box::pin(c.fresh(2)).await?;
                         *output = c.check_output(std::mem::take(output), &out);
                         Ok(())
