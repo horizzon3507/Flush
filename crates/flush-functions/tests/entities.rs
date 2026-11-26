@@ -19,6 +19,7 @@ use flush_rest::{RestClient, RestConfig};
 struct Seen {
     method: String,
     path: String,
+    body: String,
 }
 
 type Log = Arc<Mutex<Vec<Seen>>>;
@@ -61,7 +62,11 @@ async fn serve(mut stream: TcpStream, log: Log, respond: Responder) {
                 Ok(n) => buf.extend_from_slice(&chunk[..n]),
             }
         }
-        let seen = Seen { method, path };
+        let seen = Seen {
+            method,
+            path,
+            body: String::from_utf8_lossy(&buf[start..start + length]).into_owned(),
+        };
         buf.drain(..start + length);
         let (status, value) = respond(&seen);
         log.lock().unwrap().push(seen);
@@ -152,7 +157,7 @@ async fn run(source: &str, api_base: Option<String>, dm: bool) -> Result<String,
     runtime()
         .run(&ctx(api_base, dm).await, source)
         .await
-        .map_err(|e| e.code().to_owned())
+        .map_err(|e| format!("{}: {}", e.code(), e))
 }
 
 // --- argument validation ---------------------------------------------------
@@ -294,5 +299,309 @@ async fn pinned_messages_lists() {
     assert_eq!(
         (seen.method.as_str(), seen.path.as_str()),
         ("GET", "/v1/channels/222/messages/pins")
+    );
+}
+
+// --- review regressions ------------------------------------------------------
+
+fn guild_body() -> Value {
+    json!({
+        "id": "333",
+        "name": "g",
+        "owner_id": "444",
+        "roles": [{"id": "333", "name": "@everyone", "permissions": "8", "position": 0}]
+    })
+}
+
+fn member_body(id: &str) -> Value {
+    json!({"user": {"id": id, "username": "m"}, "roles": ["333"]})
+}
+
+/// Responder covering the permission pre-flight plus the routes `extra` adds.
+fn scoped_responder(
+    extra: impl Fn(&Seen) -> Option<(u16, Value)> + Send + Sync + 'static,
+) -> Responder {
+    Arc::new(move |s: &Seen| {
+        if let Some(hit) = extra(s) {
+            return hit;
+        }
+        match s.path.as_str() {
+            "/v1/channels/222" => (200, channel_body()),
+            "/v1/guilds/333" => (200, guild_body()),
+            "/v1/guilds/333/members/444" => (200, member_body("444")),
+            "/v1/guilds/333/members/@me" => (200, member_body("555")),
+            _ => (404, json!({"code": "UNKNOWN", "message": "unexpected"})),
+        }
+    })
+}
+
+#[async_std::test]
+async fn bulk_delete_requires_array() {
+    let (base, _log) = start(scoped_responder(|_| None)).await;
+    // yuzuha rejects anything that is not an array of snowflake strings.
+    for source in ["$bulkDelete[333]", "$bulkDelete[notids]"] {
+        let err = run(source, Some(base.clone()), false).await;
+        assert!(err.is_err(), "expected error for {source}");
+    }
+}
+
+#[async_std::test]
+async fn purge_messages_scans_and_bulk_deletes() {
+    let messages = json!([
+        {"id": "335", "channel_id": "222", "author": {"id": "1", "username": "other"}, "content": "x"},
+        {"id": "334", "channel_id": "222", "author": {"id": "444", "username": "t"}, "content": "y"},
+        {"id": "333", "channel_id": "222", "author": {"id": "444", "username": "t"}, "content": "z"}
+    ]);
+    let (base, log) = start(scoped_responder(move |s: &Seen| {
+        if s.method == "GET" && s.path.starts_with("/v1/channels/222/messages?") {
+            Some((200, messages.clone()))
+        } else if s.method == "POST" && s.path == "/v1/channels/222/messages/bulk-delete" {
+            Some((200, Value::Null))
+        } else {
+            None
+        }
+    }))
+    .await;
+    let out = run("$purgeMessages[3;444]", Some(base), false)
+        .await
+        .unwrap();
+    assert!(out.contains("bulk"), "unexpected output: {out}");
+    let log = log.lock().unwrap();
+    assert!(
+        log.iter().any(|s| (s.method.as_str(), s.path.as_str())
+            == ("POST", "/v1/channels/222/messages/bulk-delete")),
+        "expected bulk-delete call, got {log:?}"
+    );
+}
+
+#[async_std::test]
+async fn pinned_messages_page_rejects_bad_cursor() {
+    for source in [
+        "$pinnedMessagesPage[222;50;notacursor]",
+        "$pinnedMessagesPage[222;50;202401010000]",
+    ] {
+        let err = run(source, None, false).await;
+        assert!(err.is_err(), "expected error for {source}");
+    }
+}
+
+#[async_std::test]
+async fn pinned_messages_page_passes_iso_cursor() {
+    let (base, log) = start(scoped_responder(move |s: &Seen| {
+        if s.path.starts_with("/v1/channels/222/messages/pins") {
+            Some((
+                200,
+                json!({"messages": [message_body()], "pinned_at": ["2024-01-01T00:00:00Z"], "has_more": false}),
+            ))
+        } else {
+            None
+        }
+    }))
+    .await;
+    let out = run(
+        "$pinnedMessagesPage[222;50;2024-06-01T00:00:00Z]",
+        Some(base),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("hasMore"), "unexpected output: {out}");
+    assert!(log
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|s| s.path.contains("before=2024-06-01")));
+}
+
+#[async_std::test]
+async fn transfer_ownership_requires_transferir() {
+    // Wrong confirmation fails before any REST call.
+    let err = run("$transferOwnership[444;NOPE]", None, false).await;
+    assert!(err.is_err(), "expected confirmation guard");
+}
+
+#[async_std::test]
+async fn transfer_ownership_calls_route() {
+    let (base, log) = start(scoped_responder(|s: &Seen| {
+        if s.method == "POST" && s.path == "/v1/guilds/333/transfer-ownership" {
+            Some((200, Value::Null))
+        } else {
+            None
+        }
+    }))
+    .await;
+    run("$transferOwnership[444;TRANSFERIR]", Some(base), false)
+        .await
+        .unwrap();
+    assert!(log
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|s| s.method == "POST" && s.path == "/v1/guilds/333/transfer-ownership"));
+}
+
+#[async_std::test]
+async fn discovery_status_shape() {
+    let (base, _log) = start(scoped_responder(|s: &Seen| {
+        if s.path == "/v1/guilds/333/discovery" {
+            Some((
+                200,
+                json!({"application": null, "eligible": true, "min_member_count": 1000}),
+            ))
+        } else {
+            None
+        }
+    }))
+    .await;
+    let out = run("$discoveryStatus[]", Some(base), false).await.unwrap();
+    assert!(
+        out.contains("minMemberCount") && out.contains("eligible"),
+        "unexpected output: {out}"
+    );
+}
+
+#[async_std::test]
+async fn acknowledge_pins_posts_ack() {
+    let (base, log) = start(scoped_responder(|s: &Seen| {
+        if s.path == "/v1/channels/222/pins/ack" {
+            Some((200, Value::Null))
+        } else {
+            None
+        }
+    }))
+    .await;
+    run("$acknowledgePins[]", Some(base), false).await.unwrap();
+    assert!(log
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|s| (s.method.as_str(), s.path.as_str()) == ("POST", "/v1/channels/222/pins/ack")));
+}
+
+#[async_std::test]
+async fn clear_read_state_deletes_ack() {
+    let (base, log) = start(scoped_responder(|s: &Seen| {
+        if s.path == "/v1/channels/222/messages/ack" {
+            Some((200, Value::Null))
+        } else {
+            None
+        }
+    }))
+    .await;
+    run("$clearReadState[]", Some(base), false).await.unwrap();
+    assert!(log.lock().unwrap().iter().any(
+        |s| (s.method.as_str(), s.path.as_str()) == ("DELETE", "/v1/channels/222/messages/ack")
+    ));
+}
+
+#[async_std::test]
+async fn thread_members_maps_members() {
+    let (base, log) = start(scoped_responder(|s: &Seen| {
+        if s.path.starts_with("/v1/channels/222/thread-members") {
+            Some((
+                200,
+                json!([{
+                    "id": "222",
+                    "user_id": "888",
+                    "join_timestamp": "2024-01-01T00:00:00.000Z",
+                    "flags": 1,
+                    "muted": false
+                }]),
+            ))
+        } else {
+            None
+        }
+    }))
+    .await;
+    let out = run("$threadMembers[222]", Some(base), false).await.unwrap();
+    assert!(
+        out.contains("userID") && out.contains("888"),
+        "unexpected output: {out}"
+    );
+    assert!(log
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|s| s.path.contains("limit=100")));
+}
+
+#[async_std::test]
+async fn archived_threads_joined_uses_private_route() {
+    let (base, log) = start(scoped_responder(|s: &Seen| {
+        if s.path
+            .starts_with("/v1/channels/222/users/@me/threads/archived/private")
+        {
+            Some((
+                200,
+                json!({"threads": [], "members": [], "has_more": false}),
+            ))
+        } else {
+            None
+        }
+    }))
+    .await;
+    let out = run("$archivedThreads[222;joined]", Some(base), false)
+        .await
+        .unwrap();
+    assert!(out.contains("nextBefore"), "unexpected output: {out}");
+    let log = log.lock().unwrap();
+    assert!(
+        log.iter()
+            .any(|s| s.path.contains("archived/private?limit=50")),
+        "expected joined private route, got {log:?}"
+    );
+}
+
+#[async_std::test]
+async fn recipient_functions_reject_guild_channels() {
+    let (base, _log) = start(scoped_responder(|_| None)).await;
+    for source in ["$addRecipient[444]", "$removeRecipient[444]"] {
+        let err = run(source, Some(base.clone()), false).await;
+        assert!(err.is_err(), "expected group-DM guard for {source}");
+    }
+}
+
+#[async_std::test]
+async fn send_files_uploads_and_sends() {
+    let upload_base = Arc::new(Mutex::new(String::new()));
+    let shared = upload_base.clone();
+    let (base, log) = start(scoped_responder(move |s: &Seen| {
+        match (s.method.as_str(), s.path.as_str()) {
+            ("GET", "/dl") => Some((200, json!("file-bytes"))),
+            ("POST", "/v1/channels/222/attachments") => Some((
+                200,
+                json!({"attachments": [{
+                    "id": 0,
+                    "filename": "f.txt",
+                    "upload_filename": "up-f.txt",
+                    "file_size": 4,
+                    "content_type": "application/octet-stream",
+                    "upload_url": format!("{}/upload", shared.lock().unwrap())
+                }]}),
+            )),
+            ("PUT", _) if s.path.ends_with("/upload") => Some((200, Value::Null)),
+            ("POST", "/v1/channels/222/messages") => Some((200, message_body())),
+            _ => None,
+        }
+    }))
+    .await;
+    *upload_base.lock().unwrap() = base.clone();
+    let out = run(
+        &format!("$sendFiles[222;{base}/dl;f.txt]"),
+        Some(base),
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out, "333");
+    let log = log.lock().unwrap();
+    let send = log
+        .iter()
+        .find(|s| s.method == "POST" && s.path == "/v1/channels/222/messages")
+        .expect("expected message send");
+    assert!(
+        send.body.contains("up-f.txt"),
+        "attachment ref missing upload_filename: {}",
+        send.body
     );
 }
