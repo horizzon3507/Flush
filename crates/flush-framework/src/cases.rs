@@ -24,6 +24,9 @@ pub enum CaseType {
     Clear,
     Lock,
     Unlock,
+    Move,
+    Mute,
+    Deafen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +64,9 @@ impl CaseType {
             Self::Clear => "clear",
             Self::Lock => "lock",
             Self::Unlock => "unlock",
+            Self::Move => "move",
+            Self::Mute => "mute",
+            Self::Deafen => "deafen",
         }
     }
 

@@ -44,7 +44,9 @@ impl Action {
             Self::Unban => CaseType::Unban,
             Self::Kick => CaseType::Kick,
             Self::Timeout => CaseType::Timeout,
-            _ => CaseType::Warn,
+            Self::Move => CaseType::Move,
+            Self::Mute => CaseType::Mute,
+            Self::Deafen => CaseType::Deafen,
         }
     }
 }
