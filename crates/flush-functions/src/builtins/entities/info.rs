@@ -330,6 +330,32 @@ pub fn channel_info(channel: &flush_core::Channel) -> Value {
                 ),
             );
         }
+        if let Some(meta) = &channel.thread_metadata {
+            map.insert("archived".into(), Value::from(meta.archived));
+            map.insert("locked".into(), Value::from(meta.locked));
+            map.insert(
+                "autoArchiveDuration".into(),
+                Value::from(meta.auto_archive_duration),
+            );
+            map.insert(
+                "archiveTimestamp".into(),
+                meta.archive_timestamp
+                    .as_deref()
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            map.insert(
+                "invitable".into(),
+                meta.invitable.map(Value::from).unwrap_or(Value::Null),
+            );
+            map.insert(
+                "createTimestamp".into(),
+                meta.create_timestamp
+                    .as_deref()
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+        }
     }
     info
 }
