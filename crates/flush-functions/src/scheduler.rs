@@ -60,6 +60,8 @@ impl ScheduledJob {
 /// A finished run of a scheduled job.
 #[derive(Debug, Clone)]
 pub struct ScheduleHistoryEntry {
+    /// Snapshot of the job that ran, so `retry` can replay it.
+    pub job: ScheduledJob,
     pub execution_id: String,
     pub job_id: String,
     pub guild_id: String,
