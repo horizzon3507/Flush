@@ -345,7 +345,7 @@ pub async fn require_permission(
 /// `c.wait` over a REST future: maps `RestError` into `ScriptFailure`.
 pub async fn wait_rest<F, T>(c: &ScriptCall<'_>, future: F) -> Result<T, ScriptFailure>
 where
-    F: std::future::Future<Output = Result<T, flush_rest::RestError>> + Send,
+    F: Future<Output = Result<T, flush_rest::RestError>> + Send,
 {
     c.wait(async move { future.await.map_err(ScriptFailure::from) })
         .await
