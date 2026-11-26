@@ -186,11 +186,9 @@ fn record_case(
     Ok(())
 }
 
-/// Registers `<name>` and `mod<Name>` sharing the same body; `execute`
-/// runs the REST call after `moderate()` has cleared the guards.
-#[allow(clippy::too_many_arguments)]
-fn mod_fn(
-    d: &mut Definitions,
+/// One `<name>`/`mod<Name>` pair: `execute` runs the REST call after
+/// `moderate()` has cleared the guards.
+struct ModFn {
     name: &'static str,
     mod_name: &'static str,
     action: Action,
@@ -200,15 +198,18 @@ fn mod_fn(
     min_args: usize,
     max_args: usize,
     execute: for<'a> fn(&'a crate::call::ScriptCall<'a>, Snowflake, String) -> BoxFnFuture<'a>,
-) {
-    for (i, function) in [name, mod_name].into_iter().enumerate() {
+}
+
+fn mod_fn(d: &mut Definitions, spec: ModFn) {
+    for (i, function) in [spec.name, spec.mod_name].into_iter().enumerate() {
+        let (action, reason_arg, execute) = (spec.action, spec.reason_arg, spec.execute);
         d.add(
             function,
             "moderation",
-            min_args,
-            max_args,
-            usage,
-            description,
+            spec.min_args,
+            spec.max_args,
+            spec.usage,
+            spec.description,
             move |c| {
                 Box::pin(async move {
                     let target = Value::String(c.arg(0).await?);
@@ -244,197 +245,211 @@ fn voice_flag(raw: &str) -> Result<bool, ScriptFailure> {
 pub fn register(d: &mut Definitions) {
     mod_fn(
         d,
-        "kick",
-        "modKick",
-        Action::Kick,
-        "[usuário;motivo]",
-        "Kicks a member.",
-        1,
-        2,
-        2,
-        |c, id, _reason| {
-            Box::pin(async move {
-                wait_rest(c, c.ctx.rest.kick(c.ctx.guild_id(), id, None)).await?;
-                Ok(Value::Null)
-            })
+        ModFn {
+            name: "kick",
+            mod_name: "modKick",
+            action: Action::Kick,
+            usage: "[usuário;motivo]",
+            description: "Kicks a member.",
+            reason_arg: 1,
+            min_args: 2,
+            max_args: 2,
+            execute: |c, id, _reason| {
+                Box::pin(async move {
+                    wait_rest(c, c.ctx.rest.kick(c.ctx.guild_id(), id, None)).await?;
+                    Ok(Value::Null)
+                })
+            },
         },
     );
 
     mod_fn(
         d,
-        "ban",
-        "modBan",
-        Action::Ban,
-        "[usuário;motivo;diasDeHistórico?]",
-        "Bans a member.",
-        1,
-        2,
-        3,
-        |c, id, reason| {
-            Box::pin(async move {
-                let days = if c.arg_count() > 2 {
-                    let raw = c.arg(2).await?;
-                    if raw.is_empty() {
-                        None
-                    } else {
-                        Some(support::index(&Value::String(raw), 0)? as u32)
-                    }
-                } else {
-                    None
-                };
-                let opts = BanOptions {
-                    reason: if reason.is_empty() {
-                        None
-                    } else {
-                        Some(reason)
-                    },
-                    delete_message_days: days,
-                    ..Default::default()
-                };
-                wait_rest(c, c.ctx.rest.ban(c.ctx.guild_id(), id, &opts, None)).await?;
-                Ok(Value::Null)
-            })
-        },
-    );
-
-    mod_fn(
-        d,
-        "unban",
-        "modUnban",
-        Action::Unban,
-        "[usuário;motivo]",
-        "Lifts a ban.",
-        1,
-        2,
-        2,
-        |c, id, _reason| {
-            Box::pin(async move {
-                wait_rest(c, c.ctx.rest.unban(c.ctx.guild_id(), id, None)).await?;
-                Ok(Value::Null)
-            })
-        },
-    );
-
-    mod_fn(
-        d,
-        "timeout",
-        "modTimeout",
-        Action::Timeout,
-        "[usuário;duração;motivo]",
-        "Times a member out for a duration.",
-        2,
-        2,
-        3,
-        |c, id, reason| {
-            Box::pin(async move {
-                let duration = support::parse_duration(&Value::String(c.arg(1).await?))?;
-                let until = support::iso_from_ms((c.ctx.now)() + duration);
-                wait_rest(
-                    c,
-                    c.ctx.rest.set_timeout(
-                        c.ctx.guild_id(),
-                        id,
-                        Some(until),
-                        if reason.is_empty() {
+        ModFn {
+            name: "ban",
+            mod_name: "modBan",
+            action: Action::Ban,
+            usage: "[usuário;motivo;diasDeHistórico?]",
+            description: "Bans a member.",
+            reason_arg: 1,
+            min_args: 2,
+            max_args: 3,
+            execute: |c, id, reason| {
+                Box::pin(async move {
+                    let days = if c.arg_count() > 2 {
+                        let raw = c.arg(2).await?;
+                        if raw.is_empty() {
                             None
                         } else {
-                            Some(reason.as_str())
+                            Some(support::index(&Value::String(raw), 0)? as u32)
+                        }
+                    } else {
+                        None
+                    };
+                    let opts = BanOptions {
+                        reason: if reason.is_empty() {
+                            None
+                        } else {
+                            Some(reason)
                         },
-                        None,
-                    ),
-                )
-                .await?;
-                Ok(Value::Null)
-            })
+                        delete_message_days: days,
+                        ..Default::default()
+                    };
+                    wait_rest(c, c.ctx.rest.ban(c.ctx.guild_id(), id, &opts, None)).await?;
+                    Ok(Value::Null)
+                })
+            },
         },
     );
 
     mod_fn(
         d,
-        "moveMember",
-        "modMoveMember",
-        Action::Move,
-        "[usuário;canalOuVazio;motivo]",
-        "Moves a member to a voice channel (or disconnects on empty).",
-        2,
-        2,
-        3,
-        |c, id, _reason| {
-            Box::pin(async move {
-                let raw = c.arg(1).await?;
-                let channel = if raw.trim().is_empty() {
-                    None
-                } else {
-                    let id_ = support::channel_id_arg(&Value::String(raw))?;
-                    Some(Snowflake::from(id_.parse::<u64>().map_err(|_| {
-                        FnError::new(codes::CHANNEL_ID, "Expected a channel mention or id.")
-                    })?))
-                };
-                let patch = MemberPatch {
-                    channel_id: Some(channel),
-                    ..Default::default()
-                };
-                wait_rest(
-                    c,
-                    c.ctx.rest.patch_member(c.ctx.guild_id(), id, &patch, None),
-                )
-                .await?;
-                Ok(Value::Null)
-            })
+        ModFn {
+            name: "unban",
+            mod_name: "modUnban",
+            action: Action::Unban,
+            usage: "[usuário;motivo]",
+            description: "Lifts a ban.",
+            reason_arg: 1,
+            min_args: 2,
+            max_args: 2,
+            execute: |c, id, _reason| {
+                Box::pin(async move {
+                    wait_rest(c, c.ctx.rest.unban(c.ctx.guild_id(), id, None)).await?;
+                    Ok(Value::Null)
+                })
+            },
         },
     );
 
     mod_fn(
         d,
-        "muteMember",
-        "modMuteMember",
-        Action::Mute,
-        "[usuário;habilitado;motivo]",
-        "Server-mutes a member (`enabled` true|false).",
-        2,
-        3,
-        3,
-        |c, id, _reason| {
-            Box::pin(async move {
-                let enabled = voice_flag(&c.arg(1).await?)?;
-                let patch = MemberPatch {
-                    mute: Some(enabled),
-                    ..Default::default()
-                };
-                wait_rest(
-                    c,
-                    c.ctx.rest.patch_member(c.ctx.guild_id(), id, &patch, None),
-                )
-                .await?;
-                Ok(Value::Null)
-            })
+        ModFn {
+            name: "timeout",
+            mod_name: "modTimeout",
+            action: Action::Timeout,
+            usage: "[usuário;duração;motivo]",
+            description: "Times a member out for a duration.",
+            reason_arg: 2,
+            min_args: 2,
+            max_args: 3,
+            execute: |c, id, reason| {
+                Box::pin(async move {
+                    let duration = support::parse_duration(&Value::String(c.arg(1).await?))?;
+                    let until = support::iso_from_ms((c.ctx.now)() + duration);
+                    wait_rest(
+                        c,
+                        c.ctx.rest.set_timeout(
+                            c.ctx.guild_id(),
+                            id,
+                            Some(until),
+                            if reason.is_empty() {
+                                None
+                            } else {
+                                Some(reason.as_str())
+                            },
+                            None,
+                        ),
+                    )
+                    .await?;
+                    Ok(Value::Null)
+                })
+            },
         },
     );
 
     mod_fn(
         d,
-        "deafenMember",
-        "modDeafenMember",
-        Action::Deafen,
-        "[usuário;habilitado;motivo]",
-        "Server-deafens a member (`enabled` true|false).",
-        2,
-        3,
-        3,
-        |c, id, _reason| {
-            Box::pin(async move {
-                let enabled = voice_flag(&c.arg(1).await?)?;
-                let patch = MemberPatch {
-                    deaf: Some(enabled),
-                    ..Default::default()
-                };
-                wait_rest(
-                    c,
-                    c.ctx.rest.patch_member(c.ctx.guild_id(), id, &patch, None),
-                )
-                .await?;
-                Ok(Value::Null)
-            })
+        ModFn {
+            name: "moveMember",
+            mod_name: "modMoveMember",
+            action: Action::Move,
+            usage: "[usuário;canalOuVazio;motivo]",
+            description: "Moves a member to a voice channel (or disconnects on empty).",
+            reason_arg: 2,
+            min_args: 2,
+            max_args: 3,
+            execute: |c, id, _reason| {
+                Box::pin(async move {
+                    let raw = c.arg(1).await?;
+                    let channel = if raw.trim().is_empty() {
+                        None
+                    } else {
+                        let id_ = support::channel_id_arg(&Value::String(raw))?;
+                        Some(Snowflake::from(id_.parse::<u64>().map_err(|_| {
+                            FnError::new(codes::CHANNEL_ID, "Expected a channel mention or id.")
+                        })?))
+                    };
+                    let patch = MemberPatch {
+                        channel_id: Some(channel),
+                        ..Default::default()
+                    };
+                    wait_rest(
+                        c,
+                        c.ctx.rest.patch_member(c.ctx.guild_id(), id, &patch, None),
+                    )
+                    .await?;
+                    Ok(Value::Null)
+                })
+            },
+        },
+    );
+
+    mod_fn(
+        d,
+        ModFn {
+            name: "muteMember",
+            mod_name: "modMuteMember",
+            action: Action::Mute,
+            usage: "[usuário;habilitado;motivo]",
+            description: "Server-mutes a member (`enabled` true|false).",
+            reason_arg: 2,
+            min_args: 3,
+            max_args: 3,
+            execute: |c, id, _reason| {
+                Box::pin(async move {
+                    let enabled = voice_flag(&c.arg(1).await?)?;
+                    let patch = MemberPatch {
+                        mute: Some(enabled),
+                        ..Default::default()
+                    };
+                    wait_rest(
+                        c,
+                        c.ctx.rest.patch_member(c.ctx.guild_id(), id, &patch, None),
+                    )
+                    .await?;
+                    Ok(Value::Null)
+                })
+            },
+        },
+    );
+
+    mod_fn(
+        d,
+        ModFn {
+            name: "deafenMember",
+            mod_name: "modDeafenMember",
+            action: Action::Deafen,
+            usage: "[usuário;habilitado;motivo]",
+            description: "Server-deafens a member (`enabled` true|false).",
+            reason_arg: 2,
+            min_args: 3,
+            max_args: 3,
+            execute: |c, id, _reason| {
+                Box::pin(async move {
+                    let enabled = voice_flag(&c.arg(1).await?)?;
+                    let patch = MemberPatch {
+                        deaf: Some(enabled),
+                        ..Default::default()
+                    };
+                    wait_rest(
+                        c,
+                        c.ctx.rest.patch_member(c.ctx.guild_id(), id, &patch, None),
+                    )
+                    .await?;
+                    Ok(Value::Null)
+                })
+            },
         },
     );
 }
