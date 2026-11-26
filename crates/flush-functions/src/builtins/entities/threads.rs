@@ -74,35 +74,87 @@ pub fn register(d: &mut Definitions) {
         "Pages archived threads: public/private use an ISO timestamp; joined uses an ID.",
         |c| {
             Box::pin(async move {
+                c.ctx.require_guild()?;
                 let channel = channel_id(&c.arg(0).await?)?;
                 let kind = opt_arg(c, 1).await?.unwrap_or_else(|| "public".into());
-                let limit = opt_arg(c, 2).await?.map(|s| integer(&s)).transpose()?;
+                if !["public", "private", "joined"].contains(&kind.as_str()) {
+                    return Err(err(
+                        codes::FUNCTION_ERROR,
+                        format!("Invalid thread type: {kind}."),
+                    ));
+                }
+                let limit = match opt_arg(c, 2).await? {
+                    Some(s) => {
+                        let n = integer(&s)?;
+                        if !(2..=100).contains(&n) {
+                            return Err(err(codes::FUNCTION_ERROR, format!("Invalid limit: {n}.")));
+                        }
+                        n as u32
+                    }
+                    None => 50,
+                };
                 let before = opt_arg(c, 3).await?;
-                let private = match kind.as_str() {
-                    "public" => false,
-                    "private" | "joined" => true,
-                    other => {
+                let joined = kind == "joined";
+                if let Some(b) = &before {
+                    let valid = if joined {
+                        b.chars().all(|ch| ch.is_ascii_digit())
+                    } else {
+                        b.len() >= 20
+                            && b.chars()
+                                .take(10)
+                                .all(|ch| ch.is_ascii_digit() || ch == '-')
+                            && b.contains('T')
+                    };
+                    if !valid {
                         return Err(err(
                             codes::FUNCTION_ERROR,
-                            format!("Invalid thread type: {other}."),
-                        ))
+                            "Invalid cursor for the pagination type.",
+                        ));
                     }
-                };
+                }
                 let _ = context_channel(c, Some(channel)).await?;
-                let listing = rest(
-                    c,
-                    c.ctx.rest.archived_threads(
-                        channel,
-                        private,
-                        before.as_deref(),
-                        limit.map(|n| n as u32),
-                    ),
-                )
-                .await?;
+                let listing = if joined {
+                    let cursor = before
+                        .as_deref()
+                        .map(|s| snowflake(s, "thread"))
+                        .transpose()?;
+                    rest(
+                        c,
+                        c.ctx
+                            .rest
+                            .joined_archived_private_threads(channel, Some(limit), cursor),
+                    )
+                    .await?
+                } else {
+                    rest(
+                        c,
+                        c.ctx.rest.archived_threads(
+                            channel,
+                            kind == "private",
+                            before.as_deref(),
+                            Some(limit),
+                        ),
+                    )
+                    .await?
+                };
+                let next_before = if listing.has_more {
+                    listing.threads.last().and_then(|t| {
+                        if joined {
+                            Some(t.id.to_string())
+                        } else {
+                            t.thread_metadata
+                                .as_ref()
+                                .and_then(|m| m.archive_timestamp.clone())
+                        }
+                    })
+                } else {
+                    None
+                };
                 Ok(serialize(&serde_json::json!({
                     "threads": listing.threads,
                     "members": listing.members,
                     "hasMore": listing.has_more,
+                    "nextBefore": next_before,
                 })))
             })
         },
@@ -117,49 +169,78 @@ pub fn register(d: &mut Definitions) {
         "Lists members of a thread with a limit of 1 to 100 and a user cursor.",
         |c| {
             Box::pin(async move {
+                c.ctx.require_guild()?;
                 let thread = channel_id(&c.arg(0).await?)?;
                 let limit = match opt_arg(c, 1).await? {
                     Some(s) => {
                         let n = integer(&s)?;
                         if !(1..=100).contains(&n) {
-                            return Err(err(
-                                codes::FUNCTION_ERROR,
-                                format!("Invalid limit: {n}."),
-                            ));
+                            return Err(err(codes::FUNCTION_ERROR, format!("Invalid limit: {n}.")));
                         }
-                        Some(n as u32)
+                        n as u32
                     }
-                    None => None,
+                    None => 100,
                 };
                 let after = opt_arg(c, 2)
                     .await?
                     .map(|s| snowflake(&s, "member"))
                     .transpose()?;
-                if after.is_some() || limit.is_some() {
-                    let value = rest(
-                        c,
-                        c.ctx.rest.thread_members_page(thread, limit.unwrap_or(100), after),
-                    )
-                    .await?;
-                    return Ok(value);
-                }
-                let members = rest(c, c.ctx.rest.thread_members(thread)).await?;
+                let value = rest(c, c.ctx.rest.thread_members_page(thread, limit, after)).await?;
+                let items = match &value {
+                    Value::Array(items) => items.clone(),
+                    other => other
+                        .get("members")
+                        .or_else(|| other.get("users"))
+                        .cloned()
+                        .unwrap_or(Value::Array(vec![]))
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default(),
+                };
+                let members: Vec<flush_core::ThreadMember> = items
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
                 Ok(Value::Array(
                     members
                         .iter()
-                        .map(|m| super::common::camelize(&serde_json::json!({
-                            "id": m.id,
-                            "user_id": m.user_id,
-                            "join_timestamp": m.join_timestamp,
-                            "flags": m.flags,
-                            "muted": m.muted,
-                            "member": m.member.as_ref().map(|mb| super::info::member_info(mb, m.user_id.unwrap_or_default())),
-                        })))
+                        .map(|m| {
+                            serde_json::json!({
+                                "threadID": m.id,
+                                "userID": m.user_id,
+                                "joinedTimestamp": m.join_timestamp,
+                                "flags": m.flags,
+                            })
+                        })
                         .collect(),
                 ))
             })
         },
     );
+
+    for (name, add) in [("addThreadMember", true), ("removeThreadMember", false)] {
+        d.add(
+            name,
+            "threads",
+            2,
+            2,
+            "[thread;usuário]",
+            "Adds or removes a thread member.",
+            move |c| {
+                Box::pin(async move {
+                    c.ctx.require_guild()?;
+                    let thread = channel_id(&c.arg(0).await?)?;
+                    let user = user_id(&c.arg(1).await?)?;
+                    if add {
+                        rest(c, c.ctx.rest.add_thread_member(thread, user)).await?;
+                    } else {
+                        rest(c, c.ctx.rest.remove_thread_member(thread, user)).await?;
+                    }
+                    Ok(Value::Null)
+                })
+            },
+        );
+    }
 
     d.add(
         "threadMember",
@@ -170,14 +251,21 @@ pub fn register(d: &mut Definitions) {
         "Fetches a thread member with flags and mute state; defaults to the author.",
         |c| {
             Box::pin(async move {
+                c.ctx.require_guild()?;
                 let thread = channel_id(&c.arg(0).await?)?;
                 let user = opt_arg(c, 1)
                     .await?
                     .map(|s| user_id(&s))
                     .transpose()?
                     .unwrap_or(c.ctx.author_id());
-                let member = rest(c, c.ctx.rest.thread_member(thread, user)).await?;
-                Ok(super::common::camelize(&serialize(&member)))
+                let m = rest(c, c.ctx.rest.thread_member(thread, user)).await?;
+                Ok(serde_json::json!({
+                    "threadID": m.id,
+                    "userID": m.user_id,
+                    "joinedTimestamp": m.join_timestamp,
+                    "flags": m.flags,
+                    "muted": m.muted,
+                }))
             })
         },
     );
