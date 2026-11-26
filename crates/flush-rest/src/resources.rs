@@ -857,14 +857,26 @@ impl RestClient {
     pub async fn joined_archived_private_threads(
         &self,
         channel: Snowflake,
+        limit: Option<u32>,
+        before: Option<Snowflake>,
     ) -> Result<ThreadsListing, RestError> {
+        let mut query = String::new();
+        if let Some(l) = limit {
+            query = format!("limit={l}");
+        }
+        if let Some(b) = before {
+            query = format!(
+                "{query}{}before={b}",
+                if query.is_empty() { "" } else { "&" }
+            );
+        }
         let value: Value = self
             .request(
                 "GET",
                 &Routes::channel_joined_archived_private_threads(channel),
                 None,
                 None,
-                None,
+                (!query.is_empty()).then_some(query.as_str()),
             )
             .await?;
         threads_listing(value)
@@ -1198,18 +1210,25 @@ impl RestClient {
     }
 
     /// `GET /channels/{id}/pins` → `{messages, hasMore, nextBefore}`.
+    /// `before` is an ISO-8601 timestamp, matching the API's cursor.
     pub async fn pinned_messages_page(
         &self,
         channel: Snowflake,
         limit: u32,
-        before: Option<Snowflake>,
+        before: Option<&str>,
     ) -> Result<Value, RestError> {
         let mut query = format!("limit={limit}");
         if let Some(b) = before {
             query = format!("{query}&before={b}");
         }
-        self.request("GET", &Routes::channel_pins(channel), None, None, Some(&query))
-            .await
+        self.request(
+            "GET",
+            &Routes::channel_pins(channel),
+            None,
+            None,
+            Some(&query),
+        )
+        .await
     }
 
     /// `GET /channels/{id}/messages/{mid}/reactions/{emoji}` → `[User]` or
@@ -1228,7 +1247,11 @@ impl RestClient {
         }
         self.request(
             "GET",
-            &Routes::channel_reaction(channel, message, &crate::routes::encode_component(emoji)),
+            &Routes::channel_reaction_users(
+                channel,
+                message,
+                &crate::routes::encode_component(emoji),
+            ),
             None,
             None,
             Some(&query),
@@ -1288,6 +1311,30 @@ impl RestClient {
             .await
     }
 
+    /// `PUT /channels/{id}/recipients/{user}`.
+    pub async fn add_recipient(
+        &self,
+        channel: Snowflake,
+        user: Snowflake,
+    ) -> Result<(), RestError> {
+        self.request_unit("PUT", &Routes::channel_recipient(channel, user), None, None)
+            .await
+    }
+
+    /// `DELETE /channels/{id}/recipients/{user}`.
+    pub async fn remove_recipient(
+        &self,
+        channel: Snowflake,
+        user: Snowflake,
+    ) -> Result<(), RestError> {
+        self.request_unit(
+            "DELETE",
+            &Routes::channel_recipient(channel, user),
+            None,
+            None,
+        )
+        .await
+    }
 }
 
 /// `GET /guilds/{id}/threads/active` may answer a bare channel array.
