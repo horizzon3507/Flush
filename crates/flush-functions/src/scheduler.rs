@@ -227,23 +227,9 @@ impl ScriptScheduler {
             })
             .ok_or_else(|| format!("No failed execution '{execution_id}'."))?;
         let entry = failed.remove(position);
-        let job = ScheduledJob {
-            id: String::new(),
-            command: String::new(),
-            input: None,
-            due: Some(due),
-            interval_ms: None,
-            cron: None,
-            guild_id: entry.guild_id,
-            channel_id: String::new(),
-            author_id: entry.author_id,
-            priority: 0,
-            max_attempts: 5,
-            retry_delay_ms: 30_000,
-            retry_backoff: 1.0,
-            retry_jitter: 0.0,
-            paused: false,
-        };
+        let mut job = entry.job.clone();
+        job.due = Some(due);
+        job.paused = false;
         drop(failed);
         Ok(self.add(job))
     }
@@ -264,6 +250,7 @@ fn history_json(e: &ScheduleHistoryEntry) -> Value {
     json!({
         "executionID": e.execution_id,
         "jobID": e.job_id,
+        "task": e.job.to_json(),
         "guildID": e.guild_id,
         "authorID": e.author_id,
         "status": e.status,
