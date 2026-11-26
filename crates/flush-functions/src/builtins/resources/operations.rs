@@ -79,14 +79,16 @@ pub fn register(d: &mut Definitions) {
                     .trim_end_matches('/')
                     .trim_end_matches("/v1")
                     .to_string();
-                let info = c
+                let url = format!("{origin}/.well-known/fluxer");
+                let doc: Value = c
                     .wait(async move {
-                        flush_rest::RestClient::discover(&origin)
+                        surf::get(&url)
+                            .recv_json()
                             .await
-                            .map_err(ScriptFailure::from)
+                            .map_err(|e| FnError::new("API_ERROR", format!("{e}")).into())
                     })
                     .await?;
-                Ok(json!({ "api": info.api_public, "gateway": info.gateway }))
+                Ok(instance_info(&doc))
             })
         },
     );
@@ -103,9 +105,29 @@ pub fn register(d: &mut Definitions) {
                 operator(c)?;
                 let rest = c.ctx.rest.clone();
                 let info = c
-                    .wait(async move { rest.gateway_bot().await.map_err(ScriptFailure::from) })
+                    .wait(async move {
+                        rest.raw("GET", "/gateway/bot", None, None, None)
+                            .await
+                            .map_err(ScriptFailure::from)
+                    })
                     .await?;
-                Ok(serde_json::to_value(info).unwrap_or(Value::Null))
+                let limit = info
+                    .get("session_start_limit")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                Ok(json!({
+                    "url": info.get("url"),
+                    "shards": info.get("shards"),
+                    "sessionStartLimit": match &limit {
+                        Value::Object(l) => json!({
+                            "total": l.get("total"),
+                            "remaining": l.get("remaining"),
+                            "resetAfter": l.get("reset_after"),
+                            "maxConcurrency": l.get("max_concurrency"),
+                        }),
+                        _ => Value::Null,
+                    },
+                }))
             })
         },
     );
@@ -765,4 +787,51 @@ pub fn register(d: &mut Definitions) {
             })
         },
     );
+}
+
+/// `instanceInfo(discovery)` from yuzuha `resources/instance.ts`: maps the
+/// `.well-known/fluxer` document to the camelCase shape scripts expect.
+fn instance_info(doc: &Value) -> Value {
+    let ep = doc.get("endpoints").cloned().unwrap_or(Value::Null);
+    let endpoints = match &ep {
+        Value::Object(e) => json!({
+            "api": e.get("api"), "apiClient": e.get("api_client"),
+            "apiPublic": e.get("api_public"), "gateway": e.get("gateway"),
+            "media": e.get("media"), "staticCDN": e.get("static_cdn"),
+            "marketing": e.get("marketing"), "admin": e.get("admin"),
+            "invite": e.get("invite"), "gift": e.get("gift"),
+            "webapp": e.get("webapp"),
+        }),
+        _ => Value::Null,
+    };
+    let features = match doc.get("features") {
+        Some(Value::Object(f)) => json!({
+            "voiceEnabled": f.get("voice_enabled"), "stripeEnabled": f.get("stripe_enabled"),
+            "selfHosted": f.get("self_hosted"),
+            "presignedAttachmentUploads": f.get("presigned_attachment_uploads"),
+            "emailsEnabled": f.get("emails_enabled"),
+        }),
+        _ => Value::Null,
+    };
+    let community = doc.get("community").cloned().unwrap_or(Value::Null);
+    let services = match doc.get("services") {
+        Some(Value::Object(v)) => json!({
+            "gif": v.get("gif_enabled"), "youtube": v.get("youtube_enabled"),
+            "bluesky": v.get("bluesky_enabled"),
+        }),
+        _ => Value::Null,
+    };
+    json!({
+        "apiCodeVersion": doc.get("api_code_version"),
+        "codename": doc.get("codename"),
+        "endpoints": endpoints,
+        "features": features,
+        "registrationMode": doc.pointer("/registration/mode"),
+        "ssoEnabled": doc.pointer("/sso/enabled"),
+        "ssoEnforced": doc.pointer("/sso/enforced"),
+        "singleCommunity": community.get("single_community"),
+        "singleCommunityGuildID": community.get("single_community_guild_id"),
+        "directMessagesDisabled": community.get("direct_messages_disabled"),
+        "services": services,
+    })
 }

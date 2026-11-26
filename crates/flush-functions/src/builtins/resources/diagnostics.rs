@@ -207,9 +207,10 @@ pub fn register(d: &mut Definitions) {
         0,
         "",
         "Returns ready, readyAt and uptimeMs; times in milliseconds, absent before connecting.",
-        |_c| {
+        |c| {
             Box::pin(async move {
-                Ok(json!({ "ready": false, "readyAt": Value::Null, "uptimeMs": Value::Null }))
+                // A running script means the dispatch reached the bot.
+                Ok(json!({ "ready": c.ctx.bot_id.is_some(), "readyAt": Value::Null, "uptimeMs": Value::Null }))
             })
         },
     );
@@ -221,9 +222,14 @@ pub fn register(d: &mut Definitions) {
         0,
         "",
         "Ends the execution if the bot is not ready yet.",
-        |_c| {
+        |c| {
             Box::pin(async move {
-                Err(GuardError::new("The bot is not ready yet.", GuardReason::Generic).into())
+                if c.ctx.bot_id.is_none() {
+                    return Err(
+                        GuardError::new("The bot is not ready yet.", GuardReason::Generic).into(),
+                    );
+                }
+                Ok(Value::Null)
             })
         },
     );
